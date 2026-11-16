@@ -2973,7 +2973,7 @@ window.__ModuleLoader__.load({
                             workspace.dshWorkspace?.ok
                               ? h('span', null, `${t('local.workspace')}: ${workspace.dshWorkspace.title}`)
                               : null,
-                            workspace.sandbox
+                            status === 'ready' && workspace.sandbox
                               ? h(
                                   'span',
                                   {
