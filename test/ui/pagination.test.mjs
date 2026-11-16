@@ -82,6 +82,7 @@ test('sites replace each page, search remotely, preserve errors and ignore late 
   await page.getByText('站点 1-0', { exact: true }).waitFor();
   assert.equal(await page.locator('.tiana-site-row').count(), 20);
   assert.equal(await page.getByRole('button', { name: '上一页', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button',{name:/从模板创建|从模板安装/}).count(),0);
   await screenshot(page, 'sites-first');
   const next = page.getByRole('button', { name: '下一页', exact: true });
   await next.focus();
@@ -239,8 +240,8 @@ test('local preview defaults to sandbox, opens a tab after build, stops, and res
   assert.equal(calls.some(c=>c.includes('/prepare?') && c.includes('sandbox=off')),false);
   await page.getByRole('button',{name:'停止预览',exact:true}).waitFor();
   const actionBoxes=await page.locator('.tiana-local-actions button,.tiana-local-actions a').evaluateAll(items=>items.map(el=>{const r=el.getBoundingClientRect();return {y:r.y,height:r.height}}));
-  assert.equal(actionBoxes.length,5);
-  assert.equal(await page.getByRole('button',{name:'移除项目',exact:true}).count(),1);
+  assert.equal(actionBoxes.length,4);
+  assert.equal(await page.getByRole('button',{name:'移除项目',exact:true}).count(),0);
   assert.ok(actionBoxes.every(box=>box.y===actionBoxes[0].y));
   await screenshot(page,'local-ready');
   await page.setViewportSize({width:375,height:812});
