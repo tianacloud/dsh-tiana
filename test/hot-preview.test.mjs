@@ -5,6 +5,7 @@ import {join, dirname} from 'node:path';
 import {createRequire} from 'node:module';
 import {setTimeout as delay} from 'node:timers/promises';
 import {test} from 'node:test';
+import {get} from 'node:http';
 import {pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
 import {registerTianaRoutes, stopLocalPreview, createLocalWorkspace} from '../tiana-api.js';
@@ -70,8 +71,9 @@ test('development preview serves Vite HMR and build-only live reload; stop close
     assert.equal(w.sandbox.confined,Boolean(sandbox));
     if(id==='vite') {
       const source=new URL('/src/main.js',w.previewUrl);source.search=new URL(w.previewUrl).search;
-      assert.equal((await fetch(source,{headers:{host:'preview.example.test'}})).status,200,'DSH hostname must be allowed');
-      assert.equal((await fetch(source,{headers:{host:'untrusted.example.test'}})).status,403,'unrelated host must stay blocked');
+      const hostStatus=host=>new Promise((resolve,reject)=>{get(source,{headers:{host}},res=>{res.resume();resolve(res.statusCode);}).on('error',reject);});
+      assert.equal(await hostStatus('preview.example.test'),200,'DSH hostname must be allowed');
+      assert.equal(await hostStatus('untrusted.example.test'),403,'unrelated host must stay blocked');
     }
     const unauthorized=await fetch(new URL('/',w.previewUrl));assert.equal(unauthorized.status,403);
     const page=await browser.newPage();

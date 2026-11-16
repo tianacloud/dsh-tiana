@@ -746,8 +746,8 @@ function addWarning(workspace, text) {
 /**
  * Run a template build under DSH's sandbox when one is available: writes are
  * limited to the template directory, the plugin temp directory and the given
- * extra roots. Without a usable sandbox the build still runs and the preview
- * carries a warning saying so.
+ * extra roots. Without a usable sandbox the build still runs; the workspace
+ * sandbox status records the fallback without a duplicate warning.
  */
 async function runSandboxedBuild(workspace, command, args, env, extraRoots) {
   const temp = join(dshHome(), 'tiana-plugin', 'tmp');

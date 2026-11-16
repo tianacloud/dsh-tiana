@@ -74,6 +74,7 @@ export function statePath(env = process.env) {
  * @param {NodeJS.ProcessEnv} [options.env] - child environment.
  * @param {number} [options.timeoutMs] - hard timeout.
  * @param {AbortSignal} [options.signal] - cancellation.
+ * @param {boolean} [options.killProcessGroup] - terminate build descendants together on POSIX.
  * @param {number} [options.stdoutLimit] - capture complete stdout up to this character limit, failing on overflow.
  * @returns {Promise<{code: number|null, signal: string|null, stdout: string, stderr: string, command: string, args: readonly string[]}>}
  */
