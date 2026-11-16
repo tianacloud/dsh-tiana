@@ -166,7 +166,6 @@ test('sites deduplicate clicks and discard pages from a previous space or logged
   assert.equal(calls.filter(c => c === '/tiana/api/sites?page=2').length, before + 1);
   await page.getByRole('button', { name: '切换空间', exact: true }).click();
   await page.getByRole('option', { name: '空间 b', exact: true }).click();
-  await page.getByRole('button', { name: '切换', exact: true }).click();
   await page.getByText('ten-b 1-0', { exact: true }).waitFor();
   const oldResponse = page.waitForResponse(r => r.url().endsWith('/sites?page=2'));
   releasePage();

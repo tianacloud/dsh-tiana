@@ -233,10 +233,7 @@ window.__ModuleLoader__.load({
       'auth.connected': 'Connected to Tiana',
       'space.label': 'Space',
       'space.loading': 'Loading spaces…',
-      'space.confirm': 'Switch to this space?',
       'space.none': 'No spaces available',
-      'space.switch': 'Switch',
-      'space.cancel': 'Cancel',
       'space.open': 'Switch space',
       'account.settings': 'Personal settings',
       'auth.loginNote': 'Sign in here directly; no terminal command is needed.',
@@ -252,6 +249,7 @@ window.__ModuleLoader__.load({
       'auth.copied': 'Copied',
       'auth.waiting': 'Waiting for approval…',
       'auth.restart': 'Start over',
+      'auth.cancel': 'Cancel sign-in',
       'auth.error': 'Could not sign in',
       'auth.retry': 'Retry',
       'auth.logout': 'Sign out',
@@ -428,10 +426,7 @@ window.__ModuleLoader__.load({
       'auth.connected': '已连接 Tiana',
       'space.label': '空间',
       'space.loading': '正在加载空间…',
-      'space.confirm': '切换到此空间？',
       'space.none': '没有可用空间',
-      'space.switch': '切换',
-      'space.cancel': '取消',
       'space.open': '切换空间',
       'account.settings': '个人设置',
       'auth.loginNote': '直接在这里登录即可，不需要在终端执行命令。',
@@ -447,6 +442,7 @@ window.__ModuleLoader__.load({
       'auth.copied': '已复制',
       'auth.waiting': '等待授权…',
       'auth.restart': '重新开始',
+      'auth.cancel': '取消登录',
       'auth.error': '登录失败',
       'auth.retry': '重试',
       'auth.logout': '退出登录',
@@ -934,8 +930,13 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function AuthGate({ t, auth, login, onStartLogin, onOpenLogin, onCopyLogin, onRetryStatus, reason, onDismiss }) {
+    function AuthGate({ t, auth, login, onStartLogin, onOpenLogin, onCopyLogin, onCancelLogin, onRetryStatus, reason, onDismiss }) {
       const loginError = login?.error ?? null;
+      const cancel = onCancelLogin === undefined ? null : h(
+        'button',
+        { type: 'button', className: 'tiana-btn tiana-btn-ghost', onClick: onCancelLogin },
+        t('auth.cancel'),
+      );
       const close = onDismiss === undefined ? null : h(
         'button',
         {
@@ -956,6 +957,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'tiana-auth-icon' }, h(Icon, { name: 'spark', size: 22 })),
           h('h2', { className: 'tiana-auth-title' }, auth.phase === 'checking' ? t('auth.checking') : t('auth.starting')),
           h(Spinner, null),
+          auth.phase === 'checking' ? null : cancel,
         );
       }
 
@@ -1022,6 +1024,7 @@ window.__ModuleLoader__.load({
               { type: 'button', className: 'tiana-btn tiana-btn-ghost', onClick: onCopyLogin, disabled: !login?.verificationUri },
               login?.copied ? t('auth.copied') : t('auth.copy'),
             ),
+            cancel,
           ),
           loginError === null
             ? h('div', { className: 'tiana-auth-waiting' }, h(Spinner, null), h('span', null, t('auth.waiting')))
@@ -1053,23 +1056,16 @@ window.__ModuleLoader__.load({
 
     function SpacePicker({ t, spaces, currentSpaceId, loading, switching, onSwitch }) {
       const [open, setOpen] = React.useState(false);
-      const [pending, setPending] = React.useState(null);
       const rootRef = React.useRef(null);
       const current = spaces.find((space) => space.tenantId === currentSpaceId) ?? null;
 
       React.useEffect(() => {
         if (!open) return undefined;
         const onPointerDown = (event) => {
-          if (!rootRef.current?.contains(event.target)) {
-            setOpen(false);
-            setPending(null);
-          }
+          if (!rootRef.current?.contains(event.target)) setOpen(false);
         };
         const onKeyDown = (event) => {
-          if (event.key === 'Escape') {
-            setOpen(false);
-            setPending(null);
-          }
+          if (event.key === 'Escape') setOpen(false);
         };
         document.addEventListener('pointerdown', onPointerDown);
         document.addEventListener('keydown', onKeyDown);
@@ -1080,19 +1076,8 @@ window.__ModuleLoader__.load({
       }, [open]);
 
       const choose = (space) => {
-        if (space.tenantId === currentSpaceId) {
-          setOpen(false);
-          setPending(null);
-          return;
-        }
-        setPending(space);
-      };
-
-      const confirm = () => {
-        const target = pending;
-        setPending(null);
         setOpen(false);
-        if (target !== null) onSwitch(target.tenantId);
+        if (space.tenantId !== currentSpaceId) onSwitch(space.tenantId);
       };
 
       return h(
@@ -1138,36 +1123,7 @@ window.__ModuleLoader__.load({
                 space.tenantId === currentSpaceId
                   ? h(Icon, { name: 'check', size: 13 })
                   : null,
-              )),
-              pending === null
-                ? null
-                : h(
-                    'div',
-                    { className: 'tiana-space-confirm' },
-                    h('div', { className: 'tiana-space-confirm-text' }, t('space.confirm')),
-                    h(
-                      'div',
-                      { className: 'tiana-space-confirm-actions' },
-                      h(
-                        'button',
-                        {
-                          type: 'button',
-                          className: 'tiana-btn tiana-btn-ghost tiana-btn-small',
-                          onClick: () => setPending(null),
-                        },
-                        t('space.cancel'),
-                      ),
-                      h(
-                        'button',
-                        {
-                          type: 'button',
-                          className: 'tiana-btn tiana-btn-primary tiana-btn-small',
-                          onClick: confirm,
-                        },
-                        t('space.switch'),
-                      ),
-                    ),
-                  ),
+              ))
             )
           : null,
       );
@@ -1178,6 +1134,7 @@ window.__ModuleLoader__.load({
       auth,
       onLogout,
       onLogin,
+      onCancelLogin,
       spaces,
       currentSpaceId,
       spacesLoading,
@@ -1208,11 +1165,26 @@ window.__ModuleLoader__.load({
                 t('auth.logout'),
               ),
             )
-          : h(
-              'button',
-              { type: 'button', className: 'tiana-account-login', onClick: onLogin, disabled: loginBusy },
-              loginLabel,
-            ),
+          : auth.phase === 'starting' || auth.phase === 'pending'
+            ? h(
+                'div',
+                { className: 'tiana-account-head' },
+                h(
+                  'button',
+                  { type: 'button', className: 'tiana-account-login', onClick: onLogin, disabled: loginBusy },
+                  loginLabel,
+                ),
+                h(
+                  'button',
+                  { type: 'button', className: 'tiana-account-action', onClick: onCancelLogin },
+                  t('auth.cancel'),
+                ),
+              )
+            : h(
+                'button',
+                { type: 'button', className: 'tiana-account-login', onClick: onLogin, disabled: loginBusy },
+                loginLabel,
+              ),
         connected && spaces.length > 1
           ? h(
               'div',
@@ -2270,7 +2242,7 @@ window.__ModuleLoader__.load({
     function SitesView({
       t, sites, tab, setTab, query, setQuery,
       onNotice, notice, onCloseNotice,
-      auth, login, onStartLogin, onOpenLogin, onCopyLogin, onRetryStatus,
+      auth, login, onStartLogin, onOpenLogin, onCopyLogin, onCancelLogin, onRetryStatus,
       sitesLoading, sitesError, onRetrySites, sharedUnavailable,
       onDeleteSite, onRefreshSites, page, total, totalPages, onPrevious, onNext,
     }) {
@@ -2399,6 +2371,7 @@ window.__ModuleLoader__.load({
               onStartLogin,
               onOpenLogin,
               onCopyLogin,
+              onCancelLogin,
               onRetryStatus,
             }),
         siteToDelete === null
@@ -3370,6 +3343,13 @@ window.__ModuleLoader__.load({
         }
       ));
       const loginStartingRef = React.useRef(false);
+      // Bumped on every start/cancel so a cancelled sign-in cannot resurrect itself.
+      const loginAttemptRef = React.useRef(0);
+      const loginPopupRef = React.useRef(null);
+      // Space chosen before the CLI demanded a new sign-in; applied once after approval.
+      const pendingSpaceRef = React.useRef(null);
+      const switchSpaceRef = React.useRef(null);
+      const startLoginRef = React.useRef(null);
       const switchingSpaceRef = React.useRef(false);
       const spacesRequestRef = React.useRef(0);
       const templateRequestRef = React.useRef(0);
@@ -3477,7 +3457,7 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
-      const switchSpace = React.useCallback(async (tenantId) => {
+      const switchSpace = React.useCallback(async (tenantId, { afterLogin = false } = {}) => {
         if (switchingSpaceRef.current || typeof tenantId !== 'string' || tenantId.length === 0 || tenantId === spacesData.currentTenantId) return;
         switchingSpaceRef.current = true;
         spacesRequestRef.current += 1;
@@ -3496,25 +3476,33 @@ window.__ModuleLoader__.load({
           setSpacesData((current) => ({ ...current, currentTenantId: payload.tenantId }));
           await loadSpaces();
         } catch (error) {
+          const requiresLogin = error.payload?.requiresLogin === true;
+          const switchError = error.payload?.error ?? {
+            code: 'SPACE_SWITCH_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          };
           setSpacesData((current) => ({
             ...current,
             switching: null,
-            error: error.payload?.error ?? {
-              code: 'SPACE_SWITCH_FAILED',
-              message: error instanceof Error ? error.message : String(error),
-            },
+            error: requiresLogin && !afterLogin ? null : switchError,
           }));
           switchingSpaceRef.current = false;
-          if (error.payload?.requiresLogin) {
-            setNotice(error.message);
+          if (requiresLogin) {
             setAuth({ phase: 'anonymous', error: null });
             setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
+            if (afterLogin) {
+              setNotice(error.message);
+            } else {
+              pendingSpaceRef.current = tenantId;
+              void startLoginRef.current?.();
+            }
           }
         } finally {
           switchingSpaceRef.current = false;
           setSpacesData((current) => ({ ...current, switching: null }));
         }
       }, [loadSpaces, spacesData.currentTenantId]);
+      switchSpaceRef.current = switchSpace;
 
       React.useEffect(() => {
         if (!authenticated) {
@@ -3779,8 +3767,10 @@ window.__ModuleLoader__.load({
       const startLogin = React.useCallback(async () => {
         if (loginStartingRef.current) return;
         loginStartingRef.current = true;
+        const attempt = ++loginAttemptRef.current;
         try {
           const popup = openAuthWindow('about:blank');
+          loginPopupRef.current = popup;
           const popupBlocked = popup === null;
           setLogin({
             loading: true,
@@ -3794,10 +3784,15 @@ window.__ModuleLoader__.load({
           setAuth({ phase: 'starting', error: null });
           try {
             const payload = await tianaFetch('/tiana/api/login/start', { method: 'POST' });
+            if (attempt !== loginAttemptRef.current) return;
             if (payload.loggedIn === true) {
               closeAuthWindow(popup);
+              loginPopupRef.current = null;
               setAuth({ phase: 'authenticated', error: null });
               setLogin(null);
+              const target = pendingSpaceRef.current;
+              pendingSpaceRef.current = null;
+              if (target !== null) void switchSpaceRef.current?.(target, { afterLogin: true });
               return;
             }
             if (payload.pending === true && typeof payload.verificationUri === 'string') {
@@ -3838,6 +3833,7 @@ window.__ModuleLoader__.load({
             });
             setAuth({ phase: 'anonymous', error: null });
           } catch (error) {
+            if (attempt !== loginAttemptRef.current) return;
             closeAuthWindow(popup);
             setLogin({
               loading: false,
@@ -3851,9 +3847,21 @@ window.__ModuleLoader__.load({
             setAuth({ phase: 'anonymous', error: null });
           }
         } finally {
-          loginStartingRef.current = false;
+          if (attempt === loginAttemptRef.current) loginStartingRef.current = false;
         }
       }, []);
+      startLoginRef.current = startLogin;
+
+      const cancelLogin = React.useCallback(() => {
+        loginAttemptRef.current += 1;
+        loginStartingRef.current = false;
+        pendingSpaceRef.current = null;
+        closeAuthWindow(loginPopupRef.current);
+        loginPopupRef.current = null;
+        setLogin(null);
+        // A cancelled space re-auth may still hold the old space's session.
+        void checkStatus();
+      }, [checkStatus]);
 
       React.useEffect(() => {
         if (auth.phase !== 'pending' || !login?.verificationUri || login?.error) return undefined;
@@ -3870,8 +3878,13 @@ window.__ModuleLoader__.load({
             const payload = await tianaFetch('/tiana/api/login/resume', { method: 'POST' });
             if (cancelled) return;
             if (payload.loggedIn === true) {
+              closeAuthWindow(loginPopupRef.current);
+              loginPopupRef.current = null;
               setAuth({ phase: 'authenticated', error: null });
               setLogin(null);
+              const target = pendingSpaceRef.current;
+              pendingSpaceRef.current = null;
+              if (target !== null) void switchSpaceRef.current?.(target, { afterLogin: true });
               return;
             }
             if (payload.pending === true) {
@@ -3898,6 +3911,7 @@ window.__ModuleLoader__.load({
       const openLogin = React.useCallback(() => {
         if (!login?.verificationUri) return;
         const popup = openAuthWindow(login.verificationUri);
+        loginPopupRef.current = popup;
         if (popup === null) {
           setLogin((current) => (current === null ? current : { ...current, openFailed: true, autoOpened: false }));
         } else {
@@ -3996,6 +4010,7 @@ window.__ModuleLoader__.load({
               auth,
               onLogout: logout,
               onLogin: directLogin,
+              onCancelLogin: cancelLogin,
               spaces: spacesData.items,
               currentSpaceId: spacesData.currentTenantId,
               spacesLoading: spacesData.loading,
@@ -4050,6 +4065,7 @@ window.__ModuleLoader__.load({
                   onStartLogin: startLogin,
                   onOpenLogin: openLogin,
                   onCopyLogin: copyLogin,
+                  onCancelLogin: cancelLogin,
                   onRetryStatus: checkStatus,
                   sitesLoading: sitesData.loading,
                   sitesError: sitesData.error,
@@ -4073,7 +4089,7 @@ window.__ModuleLoader__.load({
                   notice,
                   onCloseNotice: () => setNotice(null),
                   auth,
-                  authControls: { login, onStartLogin: startLogin, onOpenLogin: openLogin, onCopyLogin: copyLogin, onRetryStatus: checkStatus },
+                  authControls: { login, onStartLogin: startLogin, onOpenLogin: openLogin, onCopyLogin: copyLogin, onCancelLogin: cancelLogin, onRetryStatus: checkStatus },
                   templatesLoading: templatesData.loading,
                   templatesLoadingMore: templatesData.loadingMore,
                   templatesError: templatesData.error,
@@ -4724,12 +4740,6 @@ window.__ModuleLoader__.load({
       .tiana-space-option.is-current { color: var(--dsw-alias-label-primary); font-weight: 600; }
       .tiana-space-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .tiana-space-option-meta { color: var(--dsw-alias-label-tertiary); font-size: 9px; }
-      .tiana-space-confirm {
-        margin-top: 5px; padding: 8px; border-top: 1px solid var(--dsw-alias-border-l1);
-        display: flex; flex-direction: column; gap: 7px;
-      }
-      .tiana-space-confirm-text { font-size: 10px; line-height: 15px; color: var(--dsw-alias-label-secondary); }
-      .tiana-space-confirm-actions { display: flex; justify-content: flex-end; gap: 5px; }
       .tiana-space-status { flex: none; font-size: 10px; color: var(--dsw-alias-label-tertiary); }
       .tiana-space-error { font-size: 10px; line-height: 14px; color: var(--dsw-alias-state-error-primary, #d05b5b); }
       .tiana-account-dot {

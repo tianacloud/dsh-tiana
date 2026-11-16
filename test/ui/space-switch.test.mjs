@@ -28,7 +28,21 @@ before(async () => {
     else { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>DSH spaces candidate</title><style>
       :root{--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#f5f6f7;--dsw-alias-border-l1:#e2e4e8;--dsw-alias-label-primary:#17202b;--dsw-alias-label-secondary:#596575;--dsw-alias-label-tertiary:#747e8c;--dsw-alias-brand-primary:#16775f}
       body{margin:0;font-family:Arial,sans-serif}#root{height:100vh}
-      </style></head><body><div id="root"></div><script src="/bundle.js"></script><script src="/client.js"></script></body></html>`); }
+      </style><script>
+      window.__authPopups = [];
+      window.open = (url, target, features) => {
+        const record = {
+          initialUrl: url,
+          target,
+          features,
+          closed: false,
+          location: { href: url },
+          close() { this.closed = true; },
+        };
+        window.__authPopups.push(record);
+        return record;
+      };
+      </script></head><body><div id="root"></div><script src="/bundle.js"></script><script src="/client.js"></script></body></html>`); }
   }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -88,6 +102,7 @@ for (const count of [0,1,2]) {
       assert.match(await page.locator('.tiana-space-trigger').innerText(),/个人空间/);
       await page.getByRole('button',{name:'切换空间',exact:true}).click();
       assert.equal(await page.getByRole('option').count(),2);
+      assert.equal(await page.locator('.tiana-space-confirm').count(),0);
       await screenshot(page,'multi-space-menu');
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('option').count(),0);
@@ -103,10 +118,10 @@ for (const count of [0,1,2]) {
     }
   });
 }
-test('switch refreshes sites, rejects late old-space response and preserves known failure', async t => {
+test('selecting a space switches immediately without confirmation, refreshes sites and rejects late old-space response', async t => {
   let current='ten-a', fail=false, releaseOld, blockOld=false;
   let siteReads=0;
-  const {page,calls} = await setup(t, async (url,route) => {
+  const {page,calls} = await setup(t, async (url) => {
     if(url.pathname.endsWith('/spaces')) return {ok:true,items:spaces,currentTenantId:current};
     if(url.pathname.endsWith('/sites')) {
       siteReads++;
@@ -125,7 +140,7 @@ test('switch refreshes sites, rejects late old-space response and preserves know
   blockOld=true;
   await page.getByRole('button',{name:'刷新站点',exact:true}).click();
   await choose(page,'协作空间');
-  await page.getByRole('button',{name:'切换',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'切换',exact:true}).count(),0);
   await page.getByText('站点 ten-b',{exact:true}).waitFor();
   assert.match(await page.locator('.tiana-space-trigger').innerText(),/协作空间/);
   const oldResponse = page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/sites'));
@@ -133,26 +148,66 @@ test('switch refreshes sites, rejects late old-space response and preserves know
   await oldResponse;
   assert.equal(await page.getByText('站点 ten-a',{exact:true}).count(),0);
   assert.ok(siteReads>=3);
-  await screenshot(page,'switched');
+  await screenshot(page,'switched-direct');
   fail=true;
   await choose(page,'个人空间');
-  await page.getByRole('button',{name:'切换',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'成员资格已撤销'}).waitFor();
   await page.getByText('站点 ten-b',{exact:true}).waitFor();
   assert.match(await page.locator('.tiana-space-trigger').innerText(),/协作空间/);
   await screenshot(page,'switch-failed');
   assert.equal(calls.filter(c=>c.includes('/spaces/switch')).length,2);
 });
-test('unknown switch shows sign-in without replaying', async t => {
+test('switch requiring re-authentication opens authorization automatically, supports cancel, and switches after approval', async t => {
+  let current='ten-a';
+  let needAuth=true;
+  let resumeApproved=false;
   const {page,calls} = await setup(t, async url => {
-    if(url.pathname.endsWith('/spaces')) return {ok:true,items:spaces,currentTenantId:'ten-a'};
-    if(url.pathname.endsWith('/spaces/switch')) return {ok:false,requiresLogin:true,error:{code:'SPACE_OUTCOME_UNKNOWN',message:'切换结果未知，请重新登录'}};
+    if(url.pathname.endsWith('/status')) return {loggedIn: true, error: null};
+    if(url.pathname.endsWith('/spaces')) return {ok:true,items:spaces,currentTenantId:current};
+    if(url.pathname.endsWith('/sites')) return siteData(current);
+    if(url.pathname.endsWith('/spaces/switch')) {
+      if(needAuth) return {ok:false,tenantId:url.searchParams.get('id'),requiresLogin:true,error:{code:'AUTH_REQUIRED',message:'需要重新授权'}};
+      current=url.searchParams.get('id');
+      return {ok:true,tenantId:current,syncStatus:'synced'};
+    }
+    if(url.pathname.endsWith('/login/start')) {
+      return {pending:true,verificationUri:'https://auth.example.test/reauth',retryAfter:1};
+    }
+    if(url.pathname.endsWith('/login/resume')) {
+      if(resumeApproved) return {loggedIn:true};
+      return {pending:true,retryAfter:1};
+    }
   });
-  await page.goto(origin);
+  await page.goto(`${origin}/?section=sites`);
+  await page.getByText('站点 ten-a',{exact:true}).waitFor();
   await choose(page,'协作空间');
-  await page.getByRole('button',{name:'切换',exact:true}).click();
-  await page.getByRole('button',{name:'登录 Tiana',exact:true}).waitFor();
-  assert.equal(await page.locator('.tiana-space-row').count(),0);
-  assert.equal(calls.filter(c=>c.includes('/spaces/switch')).length,1);
-  await screenshot(page,'switch-unknown');
+  await page.getByText('https://auth.example.test/reauth',{exact:true}).waitFor();
+  const cancelButtons = page.getByRole('button',{name:'取消登录',exact:true});
+  assert.ok(await cancelButtons.count() >= 1);
+  const popupsAfterStart = await page.evaluate(() => window.__authPopups);
+  assert.equal(popupsAfterStart.length, 1);
+  assert.equal(popupsAfterStart[0].location.href, 'https://auth.example.test/reauth');
+  await screenshot(page,'switch-reauth-pending');
+
+  // Cancelling interrupts polling, closes popup, and restores the existing session via /status.
+  await cancelButtons.first().click();
+  await page.getByText('已连接 Tiana',{exact:true}).waitFor();
+  await page.getByText('站点 ten-a',{exact:true}).waitFor();
+  assert.match(await page.locator('.tiana-space-trigger').innerText(),/个人空间/);
+  const popupClosedAfterCancel = await page.evaluate(() => window.__authPopups[0]?.closed);
+  assert.equal(popupClosedAfterCancel, true);
+  const resumeCountAfterCancel = calls.filter(c => c.includes('/login/resume')).length;
+  await new Promise(r => setTimeout(r, 2300));
+  assert.equal(calls.filter(c => c.includes('/login/resume')).length, resumeCountAfterCancel);
+  await screenshot(page,'switch-reauth-cancelled');
+
+  // Choosing the space again re-opens authorization; approving completes the switch to ten-b.
+  await choose(page,'协作空间');
+  await page.getByText('https://auth.example.test/reauth',{exact:true}).waitFor();
+  needAuth=false;
+  resumeApproved=true;
+  await page.getByText('站点 ten-b',{exact:true}).waitFor();
+  assert.match(await page.locator('.tiana-space-trigger').innerText(),/协作空间/);
+  assert.equal(calls.filter(c=>c.includes('/spaces/switch')).length,3);
+  await screenshot(page,'switch-reauth-completed');
 });

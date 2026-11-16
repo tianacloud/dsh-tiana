@@ -94,8 +94,15 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   loginResult = {pending: true, verificationUri: 'https://auth.example.test', retryAfter: 1};
   await dialog.getByRole('button', {name: '登录 Tiana', exact: true}).click();
   await dialog.getByText('https://auth.example.test', {exact: true}).waitFor();
+  await dialog.getByRole('button', {name: '取消登录', exact: true}).waitFor();
   await hidden();
   await screenshot(page,'login-pending');
+  await dialog.getByRole('button', {name: '取消登录', exact: true}).click();
+  await dialog.getByRole('button', {name: '登录 Tiana', exact: true}).waitFor();
+  await hidden();
+  await screenshot(page,'login-cancelled');
+  await dialog.getByRole('button', {name: '登录 Tiana', exact: true}).click();
+  await dialog.getByText('https://auth.example.test', {exact: true}).waitFor();
   resumeResult = {loggedIn: true};
   await dialog.getByRole('button', {name: '克隆到本地', exact: true}).waitFor();
   assert.equal(await dialog.getByRole('link', {name: '打开网页版安装'}).count(), 1);
