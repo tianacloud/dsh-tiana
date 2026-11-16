@@ -15,7 +15,8 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   await writeFile(join(directory,'build.cjs'),"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','<html><body>preview fixture</body></html>');");
   await mkdir(join(root,'tiana-plugin'));
   await writeFile(join(root,'tiana-plugin','workspaces.json'),JSON.stringify({items:[{id:'project',directory,warning:'本次模板构建未启用 DSH 沙箱（disabled by TIANA_LOCAL_BUILD_SANDBOX=off）。',dshWorkspace:{ok:true,id:'workspace'},dshSession:{ok:true,ready:true,sessionId:'deleted'}}]}));
-  let items=[{sessionId:'other-project',cwd:'/other',blank:false},{sessionId:'latest',cwd:directory,blank:false},{sessionId:'older',cwd:directory,blank:false}];
+  const archived=['archived-most-recent'];
+  let items=[{sessionId:'archived-most-recent',cwd:directory,blank:false},{sessionId:'other-project',cwd:'/other',blank:false},{sessionId:'latest',cwd:directory,blank:false},{sessionId:'older',cwd:directory,blank:false}];
   let created=0, failList=false;
   const events=[];
   const controller={
@@ -24,10 +25,12 @@ test('local workspace recovers deleted sessions and stops a real built preview',
     rename:async()=>{},
     resolveAgent:async()=>({agent:{session:{append:async(...args)=>events.push(args)}}}),
   };
-  const open=()=>openLocalSession('project',()=>controller,'zh');
+  const registry=()=>({archivedSessionIds:archived});
+  const open=()=>openLocalSession('project',()=>controller,'zh',undefined,registry);
   assert.equal((await open()).session.sessionId,'latest');
   assert.equal(created,0);
-  items=[];
+  // Clearing a DSH workspace archives its conversations; global list rows remain.
+  items=[{sessionId:'archived-most-recent',cwd:directory,blank:false}];
   const restored=await Promise.all([open(),open()]);
   assert.equal(created,1);
   assert.equal(restored[0].session.sessionId,'replacement');
@@ -38,13 +41,19 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   assert.equal((await open()).ok,false);
   assert.equal(created,1,'a failed list must not create another session');
   const routes=new Map();
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{});
+  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{resolveSessionController:()=>controller,resolveWorkspaceRegistry:registry});
   t.after(dispose);
   const call=(path,method='GET')=>new Promise((resolve,reject)=>{
     const req={method,url:path,headers:{host:'127.0.0.1','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
     const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
     Promise.resolve(routes.get(path.split('?')[0])(req,res)).catch(reject);
   });
+  failList=false;
+  items=[];
+  const empty=await call('/tiana/api/workspaces/session?id=project','POST');
+  assert.equal(empty.ok,true);
+  assert.equal(empty.session.ready,true);
+  assert.equal(created,2,'the HTTP route also creates in a completely empty workspace');
   assert.equal((await call('/tiana/api/workspaces/status?id=project')).workspace.warning,null);
   await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
   assert.equal((await stopLocalPreview('project')).error.code,'WORKSPACE_BUSY');

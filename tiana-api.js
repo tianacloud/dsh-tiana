@@ -2085,7 +2085,7 @@ export async function stopLocalPreview(id) {
   return { ok: true, workspace: publicWorkspace(workspace), error: null };
 }
 
-export async function openLocalSession(id, resolveController, locale, signal) {
+export async function openLocalSession(id, resolveController, locale, signal, resolveRegistry) {
   await loadWorkspaces();
   const workspace = WORKSPACES.get(id);
   if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
@@ -2098,8 +2098,9 @@ export async function openLocalSession(id, resolveController, locale, signal) {
       const timeout = AbortSignal.timeout(10_000);
       const result = await controller.list({}, signal ? AbortSignal.any([signal, timeout]) : timeout);
       if (!Array.isArray(result?.items)) throw new Error('The Harness session list is unavailable.');
-      // DSH returns visible (non-blank) sessions ordered by latest activity.
-      const latest = result.items.find(item => item.blank !== true && !item.parentSessionId && typeof item.sessionId === 'string' && typeof item.cwd === 'string' && resolve(item.cwd) === resolve(workspace.directory));
+      // Global list rows include archived conversations, which DSH clears on open.
+      const archived = new Set(resolveRegistry?.()?.archivedSessionIds ?? []);
+      const latest = result.items.find(item => !archived.has(item.sessionId) && item.blank !== true && !item.parentSessionId && typeof item.sessionId === 'string' && typeof item.cwd === 'string' && resolve(item.cwd) === resolve(workspace.directory));
       let session;
       if (latest) session = { ok: true, ready: true, sessionId: latest.sessionId };
       else {
@@ -2493,7 +2494,7 @@ export function registerTianaRoutes(webServer, options = {}) {
   add('POST', '/tiana/api/workspaces/session', async ({ req, signal }) => {
     const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
     const locale = req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
-    return openLocalSession(id, options.resolveSessionController, locale, signal);
+    return openLocalSession(id, options.resolveSessionController, locale, signal, options.resolveWorkspaceRegistry);
   });
 
   add('POST', '/tiana/api/sites/delete', async ({ req, signal }) => {

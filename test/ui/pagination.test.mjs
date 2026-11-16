@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { openLocalSession } from '../../tiana-api.js';
 import { resolve, join } from 'node:path';
 import { once } from 'node:events';
 import { after, before, test } from 'node:test';
@@ -279,4 +281,37 @@ test('preview blocker leaves a ready link and never creates a waiting tab', asyn
   assert.deepEqual(await page.evaluate(()=>window.previewOpenCalls),[origin+'/preview-fixture']);
   assert.equal(await page.getByRole('link',{name:'打开预览',exact:true}).getAttribute('href'),origin+'/preview-fixture');
   await screenshot(page,'local-popup-blocked');
+});
+
+
+test('opening a workspace with only archived conversations creates in that workspace', async t => {
+  const root=await mkdtemp(join(tmpdir(),'dsh-empty-session-ui-'));
+  const oldHome=process.env.DSH_HOME;process.env.DSH_HOME=root;
+  t.after(async()=>{if(oldHome===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=oldHome;await rm(root,{recursive:true,force:true});});
+  const directory=join(root,'project');await mkdir(directory);await mkdir(join(root,'tiana-plugin'));
+  const workspace={id:'empty-project',title:'空工作区项目',directory,status:'stopped',dshWorkspace:{ok:true,id:'project-workspace'}};
+  await writeFile(join(root,'tiana-plugin','workspaces.json'),JSON.stringify({items:[workspace]}));
+  let created=0;
+  const events=[];
+  const registry={archivedSessionIds:['archived-session']};
+  const controller={
+    list:async()=>({items:[{sessionId:'archived-session',cwd:directory,blank:false}]}),
+    create:async(request)=>{assert.equal(request.workspaceId,'project-workspace');created++;return {sessionId:'new-project-session'};},
+    rename:async()=>{},
+    resolveAgent:async()=>({agent:{session:{append:async(...args)=>events.push(args)}}}),
+  };
+  const {page,calls}=await setup(t,async url=>{
+    if(url.pathname.endsWith('/workspaces'))return {items:[workspace],sandbox:{supported:true}};
+    if(url.pathname.endsWith('/workspaces/session'))return openLocalSession('empty-project',()=>controller,'zh',undefined,()=>registry);
+  });
+  await page.goto(`${origin}/?section=local`);
+  await page.getByText('空工作区项目',{exact:true}).waitFor();
+  await screenshot(page,'empty-workspace-before-open');
+  await page.getByRole('button',{name:'打开会话',exact:true}).click();
+  await page.waitForFunction(()=>window.openedSession==='new-project-session');
+  assert.equal(created,1);
+  assert.ok(events.some(e=>e[0]==='assistant/message'));
+  assert.deepEqual(registry.archivedSessionIds,['archived-session']);
+  assert.equal(calls.filter(c=>c.includes('/workspaces/session')).length,1);
+  await screenshot(page,'empty-workspace-session-created');
 });
