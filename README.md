@@ -1,65 +1,68 @@
 # @tianacloud/dsh-tiana
 
-Tiana plugin bundle for DeepSeek Harness (DSH).
+简体中文 | [English](README.en.md)
 
-## Features
+DeepSeek Harness（DSH）的 Tiana 插件包。
 
-- **Automatic toolchain bootstrap**: On first activation, installs `@tianacloud/cli` (if missing or older than `1.0.17`) and installs the official Tiana agent skills (`tiana`, `tiana-function`, `tiana-git`, `tiana-sqlite`, `tiana-web`) via `@tianacloud/agent-skills` into `$DSH_HOME/skills` without writing to shared `~/.agents/skills`.
-- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<name>` with an isolated local SQLite preview and a DSH workspace session.
-- **Sites & local projects**: Sign in via Tiana CLI browser authorization, list and manage deployed Tiana web sites (open, manage in Tiana Console, or delete site while keeping associated SQLite/Git resources), and launch or reopen local template previews.
+## 功能概览
 
-## Prerequisites
+- **工具链自动引导**：首次激活时自动检测并安装/升级 `@tianacloud/cli`（最低要求 `1.0.17`），并通过官方 `@tianacloud/agent-skills` 将五个 Tiana Skill（`tiana`、`tiana-function`、`tiana-git`、`tiana-sqlite`、`tiana-web`）安装到 **DSH 专用目录** `$DSH_HOME/skills`，不会写入 `~/.agents/skills`。
+- **模板市场**：无需登录即可按分类或关键词浏览公开 Tiana 网页应用模板、查看沙箱预览、复制提示词，或将模板源码克隆到 `~/TianaTemplates/<模板名>` 并自动创建 DSH 工作区与本地 SQLite mock 预览。
+- **沙箱构建开关**：本地克隆与构建面板内置「沙箱构建」开关，默认在支持沙箱的主机上开启；若当前主机不支持沙箱，该开关将保持未开启且不可勾选。
+- **站点与本地项目管理**：通过 Tiana CLI 浏览器授权登录，查看与管理个人站点（直接访问、跳转控制台管理、删除站点并保留关联 SQLite/Git 资源），以及查看并重启本地克隆项目的预览服务。
 
-- **Node.js**: `>=22.13.0` (uses built-in `node:sqlite` for local template previews)
-- **DeepSeek Harness**: `>=0.2.2-rc.1`
-- Network access to npm registry and `https://console.tianacloud.com` (or `TIANA_API_ORIGIN`) for initial bootstrap and template marketplace browsing.
+## 前置条件
 
-## Installation
+- **Node.js**：`>=22.13.0`（本地模板预览依赖内置 `node:sqlite`）
+- **DeepSeek Harness**：`>=0.2.2-rc.1`
+- 首次引导及模板市场访问需要连通 npm registry 与 `https://console.tianacloud.com`（或 `TIANA_API_ORIGIN` 指定的地址）。
 
-### Via DeepSeek Harness UI / `plugin_manager`
+## 安装方式
 
-Install bundle target:
+### 通过 DSH 界面 / `plugin_manager`
+
+直接安装 bundle 目标：
 
 ```text
 @tianacloud/dsh-tiana
 ```
 
-### Via DSH CLI
+### 通过 DSH CLI
 
-Replace `<profile>` with your DSH profile name (for example `web`):
+将 `<profile>` 替换为你的 profile 名称（例如 `web`）：
 
 ```sh
 dsh plugin --profile <profile> add @tianacloud/dsh-tiana
 ```
 
-After installation, the Host plugin runs an idempotent bootstrap and writes diagnostics to `$DSH_HOME/tiana-plugin/install-state.json`. You can also run the bootstrap manually from the installed package directory:
+安装并激活后，Host 插件会自动执行幂等 bootstrap，并将诊断状态写入 `$DSH_HOME/tiana-plugin/install-state.json`。如需手动排查或重试，可在插件包目录执行：
 
 ```sh
 node scripts/bootstrap.mjs
 ```
 
-## Configuration
+## 环境变量
 
-| Environment Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `TIANA_API_ORIGIN` | `https://console.tianacloud.com` | Overrides the Tiana API/console origin. Must be an `http:` or `https:` origin without path, credentials, query, or fragment. |
-| `DSH_HOME` | `~/.dsh` | DSH home directory used for `$DSH_HOME/skills` and `$DSH_HOME/tiana-plugin`. |
-| `TIANA_LOCAL_BUILD_SANDBOX` | _(unset)_ | Set to `off` to run local template builds without the DSH sandbox. |
+| `TIANA_API_ORIGIN` | `https://console.tianacloud.com` | 覆盖 Tiana API 与控制台地址；仅接受不含路径、凭据、查询参数和片段的 `http:`/`https:` origin。 |
+| `DSH_HOME` | `~/.dsh` | DSH 主目录，用于存放 `$DSH_HOME/skills` 与 `$DSH_HOME/tiana-plugin`。 |
+| `TIANA_LOCAL_BUILD_SANDBOX` | （未设置） | 设为 `off` 时，主机将禁用本地模板构建的 DSH 沙箱支持。 |
 
-## Side Effects & Uninstall
+## 副作用与卸载说明
 
-- Installing and activating this plugin installs `@tianacloud/cli` globally (preferring user-writable `pnpm` global bin, falling back to `npm`) and writes the five official Tiana skills into `$DSH_HOME/skills`.
-- Existing skills in `$DSH_HOME/skills`, `~/.agents/skills`, or project-level `.dsh/skills` / `.agents/skills` are never overwritten or deleted by the plugin.
-- **Uninstalling `@tianacloud/dsh-tiana` does NOT automatically remove** the globally installed `tiana` CLI, `$DSH_HOME/skills`, cloned directories under `~/TianaTemplates/`, or `$DSH_HOME/tiana-plugin/` state. DSH has no uninstall hook or options UI for plugins, so remove those manually if no longer needed.
+- 插件首次激活会在用户级环境全局安装 `tiana` CLI（优先使用用户可写的 `pnpm` 全局目录，回退到 `npm`），并将五个官方 Skill 安装至 `$DSH_HOME/skills`。
+- 插件不会覆盖已存在的同名 Skill，也不会写入 `~/.agents/skills` 或项目级 `.dsh/skills`、`.agents/skills`。
+- **卸载 `@tianacloud/dsh-tiana` 不会自动删除**已全局安装的 `tiana` CLI、`$DSH_HOME/skills`、`~/TianaTemplates/` 中的本地克隆项目，以及 `$DSH_HOME/tiana-plugin/` 下的状态与预览数据；DSH 目前没有插件卸载钩子，也没有卸载选项界面，如不再需要，请手动清理。
 
-## Security & Privacy Notes
+## 安全与隐私边界
 
-- Panel routes under `/tiana/api/*` sit behind the DSH Web Server boundary. Being able to reach that server is the trust boundary: there is no second authentication, only a same-origin check plus the `x-tiana-plugin: 1` header on JSON endpoints.
-- CLI credentials and refresh tokens are never sent to the browser. Host reads only the CLI access token in memory for read-only space quota and site icon endpoints.
-- Public template previews are rendered in an isolated `sandbox="allow-scripts"` iframe.
-- Local template previews run on an independent HTTP port with token/cookie protection and local SQLite mock data. The port listens on loopback plus the private, CGNAT (for example Tailscale) and unique-local IPv6 addresses of the machine's network interfaces, so it is reachable wherever the DSH Web Server is. Public addresses, link-local addresses and container bridges (`docker0`, `br-*`, `veth*`, ...) are skipped.
-- Local template builds (`vite build` or the template build script) run under the DSH sandbox (`ctx.sandbox`) in `workspace-write` mode: writes are confined to the template directory, the plugin's temp directory and the preview output. **The sandbox does not restrict reads or network access**, so a hostile template build could still read files or send data out. Dependency installation (`npm ci --ignore-scripts`) is not sandboxed. If no sandbox is available (for example some Windows setups) the build runs unconfined and the UI shows a warning. Only clone templates you trust.
+- `/tiana/api/*` 路由位于 DSH Web Server 边界内；能访问该服务即视为可信，不做二次鉴权，仅校验同源，JSON 接口另需 `x-tiana-plugin: 1` 请求头。
+- 浏览器端不接触 CLI 凭据或 refresh token；Host 仅在内存中读取 CLI access token 用于只读空间配额与站点图标代理。
+- 公开模板预览使用 `sandbox="allow-scripts"` 的隔离 iframe。
+- 本地模板预览运行在带 token/cookie 保护的独立端口上，使用本地 SQLite mock 数据，不连接云端数据库或运行后端函数。该端口监听回环地址，以及各网卡上的私有地址、CGNAT（如 Tailscale）和 IPv6 唯一本地地址，因此 DSH Web Server 能到达的地方也能打开预览；公网地址、链路本地地址和容器网桥（`docker0`、`br-*`、`veth*` 等）不会监听。
+- 本地模板构建（`vite build` 或模板自带构建脚本）在开启「沙箱构建」时运行于 DSH 沙箱（`ctx.sandbox`）的 `workspace-write` 模式下：写入仅限模板目录、插件临时目录和预览产物目录。**沙箱不限制读取与网络访问**，恶意模板构建仍可能读取文件或外发数据；依赖安装（`npm ci --ignore-scripts`）不在沙箱内。若本机不支持沙箱或手动关闭「沙箱构建」开关，构建将无约束运行，界面会给出明确提示。请只克隆可信模板。
 
-## License
+## 开源许可
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0，详见 [LICENSE](LICENSE)。
