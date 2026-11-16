@@ -117,6 +117,10 @@ window.__ModuleLoader__.load({
       'local.retryPreview': 'Retry preview',
       'local.building': 'Building preview…',
       'local.openSession': 'Open session',
+      'local.remove': 'Remove project',
+      'local.removeTitle': 'Remove this project from the list?',
+      'local.removeBody': 'Only the Tiana project entry will be removed and its preview stopped. The local folder, DeepSeek Harness workspace, and conversation history will NOT be deleted. Delete them yourself if needed.',
+      'local.removeBusy': 'Removing…',
       'local.workspace': 'DSH workspace',
       'local.created': 'Created',
       'local.count': 'local projects',
@@ -309,6 +313,10 @@ window.__ModuleLoader__.load({
       'local.retryPreview': '重试预览',
       'local.building': '预览构建中…',
       'local.openSession': '打开会话',
+      'local.remove': '移除项目',
+      'local.removeTitle': '从列表中移除这个项目？',
+      'local.removeBody': '只会移除 Tiana 项目列表记录并停止预览。不会删除本地文件夹、DeepSeek Harness 工作区或历史会话；如需删除，请自行处理。',
+      'local.removeBusy': '正在移除…',
       'local.workspace': 'DSH 工作区',
       'local.created': '创建于',
       'local.count': '个本地项目',
@@ -1296,7 +1304,7 @@ window.__ModuleLoader__.load({
             title: t('sites.delete'),
             'aria-label': t('sites.delete'),
           },
-          h(Icon, { name: 'trash', size: 15 }),
+          h(Icon, { name: 'x', size: 15 }),
         ),
       );
     }
@@ -2813,9 +2821,48 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function LocalProjectsView({ t, items, sandboxCapability, sandboxEnabled, onToggleSandbox, loading, error, onRefresh, onPrepare, onStop, onOpenSession }) {
+    function RemoveLocalProjectDialog({ t, workspace, onConfirm, onClose }) {
+      const dialogRef = React.useRef(null);
+      const [busy, setBusy] = React.useState(false);
+      const [error, setError] = React.useState(null);
+      React.useEffect(() => {
+        const dialog = dialogRef.current;
+        dialog.showModal();
+        return () => { if (dialog.open) dialog.close(); };
+      }, []);
+      const confirm = async () => {
+        if (busy) return;
+        setBusy(true);
+        setError(null);
+        try { await onConfirm(workspace.id); onClose(); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+        finally { setBusy(false); }
+      };
+      return h('dialog', {
+        ref: dialogRef, className: 'tiana-local-remove',
+        'aria-labelledby': 'tiana-local-remove-title',
+        'aria-describedby': 'tiana-local-remove-body',
+        onCancel: event => { if (busy) event.preventDefault(); },
+        onClose,
+      },
+        h('h2', { id: 'tiana-local-remove-title', className: 'tiana-dialog-title' }, t('local.removeTitle')),
+        h('p', { className: 'tiana-dialog-counts' }, workspace.title),
+        h('p', { className: 'tiana-local-path' }, workspace.directory),
+        h('p', { id: 'tiana-local-remove-body', className: 'tiana-dialog-desc' }, t('local.removeBody')),
+        error ? h('p', { role: 'alert', className: 'tiana-auth-error' }, error) : null,
+        h('div', { className: 'tiana-dialog-actions' },
+          h('button', { type: 'button', className: 'tiana-btn tiana-btn-ghost', autoFocus: true,
+            disabled: busy, onClick: () => dialogRef.current.close() }, t('common.cancel')),
+          h('button', { type: 'button', className: 'tiana-btn tiana-btn-primary',
+            disabled: busy, onClick: confirm }, busy ? t('local.removeBusy') : t('local.remove')),
+        ),
+      );
+    }
+
+    function LocalProjectsView({ t, items, sandboxCapability, sandboxEnabled, onToggleSandbox, loading, error, onRefresh, onPrepare, onStop, onRemove, onOpenSession }) {
       const [busyId, setBusyId] = React.useState(null);
       const [actionError, setActionError] = React.useState(null);
+      const [removeTarget, setRemoveTarget] = React.useState(null);
       const useSandbox = sandboxCapability?.supported === true && sandboxEnabled;
       const pendingPreview = React.useRef(null);
       React.useEffect(() => {
@@ -2871,6 +2918,14 @@ window.__ModuleLoader__.load({
       return h(
         React.Fragment,
         null,
+        removeTarget ? h(RemoveLocalProjectDialog, {
+          t, workspace: removeTarget, onClose: () => setRemoveTarget(null),
+          onConfirm: async id => {
+            setBusyId(id);
+            try { await onRemove(id); if (pendingPreview.current?.id === id) pendingPreview.current = null; }
+            finally { setBusyId(null); }
+          },
+        }) : null,
         h(
           'header',
           { className: 'tiana-page-head' },
@@ -3045,6 +3100,12 @@ window.__ModuleLoader__.load({
                                 t('local.openSession'),
                               )
                             : null,
+                          h('button', {
+                            type: 'button', className: 'tiana-icon-btn',
+                            title: t('local.remove'), 'aria-label': t('local.remove'),
+                            disabled: busyId !== null || status === 'preparing',
+                            onClick: () => setRemoveTarget(workspace),
+                          }, h(Icon, { name: 'x', size: 15 })),
                           status === 'ready' ? h(
                             'div', { className: 'tiana-preview-tools', role: 'group', 'aria-label': t('preview.title') },
                             h('button', {
@@ -3351,6 +3412,7 @@ window.__ModuleLoader__.load({
         switching: null,
         error: null,
       });
+      const localRequestRef = React.useRef(0);
       const [localData, setLocalData] = React.useState({ loading: true, items: [], sandbox: null, error: null });
       const [sandboxEnabled, setSandboxEnabled] = React.useState(() => readSandboxPreference());
 
@@ -3433,9 +3495,11 @@ window.__ModuleLoader__.load({
       }, [siteQuery]);
 
       const loadLocalProjects = React.useCallback(async (silent = false) => {
+        const requestId = ++localRequestRef.current;
         if (!silent) setLocalData((current) => ({ ...current, loading: true, error: null }));
         try {
           const payload = await tianaFetch('/tiana/api/workspaces');
+          if (requestId !== localRequestRef.current) return;
           if (payload.error) throw new Error(payload.error.message || 'Local projects failed.');
           setLocalData({
             loading: false,
@@ -3444,6 +3508,7 @@ window.__ModuleLoader__.load({
             error: null,
           });
         } catch (error) {
+          if (requestId !== localRequestRef.current) return;
           setLocalData((current) => ({
             ...current,
             loading: false,
@@ -3542,10 +3607,12 @@ window.__ModuleLoader__.load({
       }, [section, loadLocalProjects]);
 
       React.useEffect(() => {
-        if (!localData.items.some((item) => item.status === 'preparing')) return undefined;
-        const timer = setTimeout(() => void loadLocalProjects(true), 1500);
+        if (localData.loading) return undefined;
+        const preparing = localData.items.some(item => item.status === 'preparing');
+        if (section !== 'local' && !preparing) return undefined;
+        const timer = setTimeout(() => void loadLocalProjects(true), preparing ? 1500 : 3000);
         return () => clearTimeout(timer);
-      }, [localData.items, loadLocalProjects]);
+      }, [section, localData, loadLocalProjects]);
 
       const prepareLocal = React.useCallback(async (id, sandboxOff = false) => {
         const params = new URLSearchParams({ id });
@@ -4030,6 +4097,12 @@ window.__ModuleLoader__.load({
                   error: localData.error,
                   onRefresh: () => loadLocalProjects(),
                   onPrepare: prepareLocal,
+                  onRemove: async id => {
+                    const payload = await tianaFetch(`/tiana/api/workspaces/remove?id=${encodeURIComponent(id)}`, { method: 'POST' });
+                    if (!payload.ok || payload.error) throw new Error(payload.error?.message || t('local.loadError'));
+                    localRequestRef.current += 1;
+                    setLocalData(current => ({ ...current, loading: false, items: current.items.filter(item => item.id !== id) }));
+                  },
                   onStop: async id => {
                     const payload = await tianaFetch(`/tiana/api/workspaces/stop?id=${encodeURIComponent(id)}`, { method: 'POST' });
                     if (payload.error) throw new Error(payload.error.message);
@@ -4400,6 +4473,7 @@ window.__ModuleLoader__.load({
         font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-error-primary, #d05b5b);
         overflow-wrap: anywhere;
       }
+      .tiana-local-actions > .tiana-icon-btn { min-width: 32px; min-height: 32px; }
       .tiana-local-actions > .tiana-btn { min-height: 32px; white-space: nowrap; }
       .tiana-preview-tools { display: inline-flex; align-items: center; gap: 2px; padding-left: 7px; border-left: 1px solid var(--dsw-alias-border-l1); }
       .tiana-preview-tools .tiana-icon-btn { min-width: 32px; min-height: 32px; border-color: transparent; }
@@ -4553,6 +4627,14 @@ window.__ModuleLoader__.load({
         display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; line-height: 16px;
         color: var(--dsw-alias-label-secondary);
       }
+      .tiana-local-remove {
+        border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; padding: 24px;
+        width: min(520px, calc(100vw - 32px)); box-sizing: border-box;
+        max-height: calc(100vh - 32px); overflow: auto;
+        color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1);
+      }
+      .tiana-local-remove:modal { overscroll-behavior: contain; }
+      .tiana-local-remove::backdrop { background: rgb(0 0 0 / 35%); overflow: hidden; overscroll-behavior: contain; }
       .tiana-dialog-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 16px; }
       .tiana-prompt {
         border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;

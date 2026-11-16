@@ -239,7 +239,8 @@ test('local preview defaults to sandbox, opens a tab after build, stops, and res
   assert.equal(calls.some(c=>c.includes('/prepare?') && c.includes('sandbox=off')),false);
   await page.getByRole('button',{name:'停止预览',exact:true}).waitFor();
   const actionBoxes=await page.locator('.tiana-local-actions button,.tiana-local-actions a').evaluateAll(items=>items.map(el=>{const r=el.getBoundingClientRect();return {y:r.y,height:r.height}}));
-  assert.equal(actionBoxes.length,4);
+  assert.equal(actionBoxes.length,5);
+  assert.equal(await page.getByRole('button',{name:'移除项目',exact:true}).count(),1);
   assert.ok(actionBoxes.every(box=>box.y===actionBoxes[0].y));
   await screenshot(page,'local-ready');
   await page.setViewportSize({width:375,height:812});

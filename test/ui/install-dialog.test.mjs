@@ -145,3 +145,52 @@ test('stable template IDs detect existing installs and reuse the newest session'
   assert.ok(calls.some(c=>c==='/tiana/api/workspaces/session?id=local-existing'));
   assert.equal(calls.some(c=>c.includes('/templates/clone')),false);
 });
+
+test('local removal confirms retained files/workspace/history; cancellation, Escape and failed retry are safe', async t => {
+  let removed=false, fail=true, removeCalls=0;
+  const project={id:'local-remove',template:'',title:'保留文件测试',directory:'/fixture/我的项目',status:'stopped',createdAt:'2026-11-16T00:00:00Z'};
+  const {page}=await setup(t,async url=>{
+    if(url.pathname.endsWith('/workspaces')) return {ok:true,items:removed?[]:[project],sandbox:{supported:true}};
+    if(url.pathname.endsWith('/workspaces/remove')) {
+      removeCalls++;
+      if(fail)return {ok:false,error:{code:'LOCAL_REMOVE_FAILED',message:'记录保存失败，请重试'}};
+      await new Promise(resolve=>setTimeout(resolve,250));removed=true;return {ok:true,error:null};
+    }
+  });
+  await page.goto(origin+'?section=local');
+  const opener=page.getByRole('button',{name:'移除项目',exact:true});await opener.click();
+  const dialog=page.getByRole('dialog',{name:'从列表中移除这个项目？'});
+  await dialog.waitFor();
+  await dialog.getByText(project.directory,{exact:true}).waitFor();
+  assert.match(await dialog.innerText(),/不会删除本地文件夹、DeepSeek Harness 工作区或历史会话/);
+  assert.equal(await dialog.getByRole('button',{name:'取消',exact:true}).evaluate(el=>el===document.activeElement),true);
+  await screenshot(page,'local-remove-confirm');
+  await dialog.getByRole('button',{name:'取消',exact:true}).click();await dialog.waitFor({state:'detached'});
+  assert.equal(removeCalls,0);
+  await opener.click();await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
+  assert.equal(removeCalls,0);assert.equal(await opener.evaluate(el=>el===document.activeElement),true);
+  await opener.click();await dialog.getByRole('button',{name:'移除项目',exact:true}).click();
+  await dialog.getByRole('alert').waitFor();assert.equal(removeCalls,1);assert.equal(removed,false);
+  await screenshot(page,'local-remove-failed');
+  fail=false;
+  await dialog.getByRole('button',{name:'移除项目',exact:true}).click();
+  assert.equal(await dialog.getByRole('button',{name:'取消',exact:true}).isDisabled(),true);
+  await dialog.waitFor({state:'detached'});
+  await page.getByText('还没有本地项目',{exact:true}).waitFor();
+  assert.equal(removeCalls,2);
+  await screenshot(page,'local-remove-complete');
+});
+
+test('local projects refresh automatically when missing directories hide and return', async t=>{
+  let visible=true,reads=0;
+  const {page}=await setup(t,async url=>{
+    if(url.pathname.endsWith('/workspaces')){reads++;return {ok:true,items:visible?[{id:'recovered',template:'',title:'改名后恢复',directory:'/fixture/恢复项目',status:'stopped'}]:[],sandbox:{supported:true}};}
+  });
+  await page.goto(origin+'?section=local');
+  const title=page.getByText('改名后恢复',{exact:true});await title.waitFor();
+  visible=false;await title.waitFor({state:'detached'});
+  await screenshot(page,'local-directory-hidden');
+  visible=true;await title.waitFor();
+  assert.ok(reads>=3);
+  await screenshot(page,'local-directory-restored');
+});

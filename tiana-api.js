@@ -17,7 +17,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, watch } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -239,6 +239,7 @@ function withAcquisitionSource(rawUrl) {
 }
 const WORKSPACE_PREVIEW_BODY_BYTES = 1_000_000;
 const WORKSPACES = new Map();
+const WORKSPACE_REMOVALS = new Map();
 /** Resolves DSH's `sandbox` service; set while the routes are registered. */
 let resolveSandbox = () => undefined;
 let workspacesLoaded = false;
@@ -933,7 +934,7 @@ async function loadWorkspaces() {
   await workspacesLoadPromise;
 }
 
-function persistWorkspaces() {
+function persistWorkspaces({ strict = false } = {}) {
   const items = [...WORKSPACES.values()].map((workspace) => ({
     id: workspace.id,
     title: workspace.title,
@@ -946,12 +947,14 @@ function persistWorkspaces() {
     warning: workspace.warning ?? null,
     sandbox: workspace.sandbox ?? null,
   }));
-  workspacePersistTail = workspacePersistTail.then(async () => {
+  const pending = workspacePersistTail.then(async () => {
     const file = workspaceStoreFile();
     await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, `${JSON.stringify({ version: 1, items }, null, 2)}\n`, { mode: 0o600 });
-  }).catch(() => undefined);
-  return workspacePersistTail;
+    await writeFile(`${file}.tmp`, `${JSON.stringify({ version: 1, items }, null, 2)}\n`, { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  });
+  workspacePersistTail = pending.catch(() => undefined);
+  return strict ? pending : workspacePersistTail;
 }
 
 function previewHostname(req) {
@@ -2028,7 +2031,7 @@ async function restartWorkspace(id, locale, { sandboxOff = false, previewHost } 
       error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' },
     };
   }
-  if (workspace.building) {
+  if (workspace.building || workspace.removing) {
     return {
       ok: false,
       workspace: publicWorkspace(workspace),
@@ -2039,11 +2042,40 @@ async function restartWorkspace(id, locale, { sandboxOff = false, previewHost } 
   return { ok: true, workspace: publicWorkspace(workspace), error: null };
 }
 
+export async function removeLocalWorkspace(id) {
+  await loadWorkspaces();
+  if (WORKSPACE_REMOVALS.has(id)) return WORKSPACE_REMOVALS.get(id);
+  const workspace = WORKSPACES.get(id);
+  if (!workspace) return { ok: true, error: null };
+  if (workspace.building || workspace.sessionOpening || workspace.removing) {
+    return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'The project is busy. Wait for the current operation to finish and retry.' } };
+  }
+  workspace.removing = true;
+  const pending = (async () => {
+    try {
+      await closeWorkspaceServer(workspace);
+      closeWorkspaceDatabase(workspace);
+      workspace.status = 'stopped';
+      workspace.phase = 'stopped';
+      workspace.readyAt = null;
+      WORKSPACES.delete(id);
+      try { await persistWorkspaces({ strict: true }); }
+      catch (error) { WORKSPACES.set(id, workspace); throw error; }
+      return { ok: true, error: null };
+    } catch (error) {
+      return { ok: false, error: { code: 'LOCAL_REMOVE_FAILED', message: error instanceof Error ? error.message : String(error) } };
+    } finally { workspace.removing = false; }
+  })();
+  WORKSPACE_REMOVALS.set(id, pending);
+  try { return await pending; }
+  finally { WORKSPACE_REMOVALS.delete(id); }
+}
+
 export async function stopLocalPreview(id) {
   await loadWorkspaces();
   const workspace = WORKSPACES.get(id);
   if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
-  if (workspace.building) return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'Wait for the build to finish before stopping the preview.' } };
+  if (workspace.building || workspace.removing) return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'Wait for the build to finish before stopping the preview.' } };
   await closeWorkspaceServer(workspace);
   closeWorkspaceDatabase(workspace);
   workspace.status = 'stopped';
@@ -2057,6 +2089,7 @@ export async function openLocalSession(id, resolveController, locale, signal) {
   await loadWorkspaces();
   const workspace = WORKSPACES.get(id);
   if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
+  if (workspace.removing) return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'The project is being removed.' } };
   if (workspace.sessionOpening) return workspace.sessionOpening;
   workspace.sessionOpening = (async () => {
     try {
@@ -2417,8 +2450,14 @@ export function registerTianaRoutes(webServer, options = {}) {
   add('GET', '/tiana/api/workspaces', async ({ req }) => {
     await loadWorkspaces();
     const sandbox = await sandboxCapability();
-    const items = [...WORKSPACES.values()]
-      .slice()
+    const visible = await Promise.all([...WORKSPACES.values()].map(async workspace => {
+      try { return (await stat(workspace.directory)).isDirectory() ? workspace : null; }
+      catch (error) {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+        throw error;
+      }
+    }));
+    const items = visible.filter(Boolean)
       .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
       .map((workspace) => publicWorkspace(workspace, req));
     return { ok: true, items, sandbox, error: null };
@@ -2441,6 +2480,11 @@ export function registerTianaRoutes(webServer, options = {}) {
     const locale = url.searchParams.get('lang') ?? req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
     const sandboxOff = url.searchParams.get('sandbox') === 'off';
     return restartWorkspace(id, locale, { sandboxOff, previewHost: previewHostname(req) });
+  });
+
+  add('POST', '/tiana/api/workspaces/remove', async ({ req }) => {
+    const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
+    return removeLocalWorkspace(id);
   });
 
   add('POST', '/tiana/api/workspaces/stop', async ({ req }) => {

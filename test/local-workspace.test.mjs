@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import test from 'node:test';
-import {registerTianaRoutes, openLocalSession, stopLocalPreview} from '../tiana-api.js';
+import {registerTianaRoutes, openLocalSession, stopLocalPreview, removeLocalWorkspace} from '../tiana-api.js';
 
 test('local workspace recovers deleted sessions and stops a real built preview', async t => {
   const root=await mkdtemp(join(tmpdir(),'tiana-local-test-'));
@@ -48,6 +48,7 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   assert.equal((await call('/tiana/api/workspaces/status?id=project')).workspace.warning,null);
   await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
   assert.equal((await stopLocalPreview('project')).error.code,'WORKSPACE_BUSY');
+  assert.equal((await removeLocalWorkspace('project')).error.code,'WORKSPACE_BUSY');
   let workspace;
   for(let i=0;i<100;i++) {
     workspace=(await call('/tiana/api/workspaces/status?id=project')).workspace;
@@ -62,4 +63,14 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   assert.equal(stopped.workspace.previewUrl,null);
   await assert.rejects(fetch(url));
   assert.equal((await stopLocalPreview('project')).ok,true);
+  await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
+  for(let i=0;i<100;i++) {
+    workspace=(await call('/tiana/api/workspaces/status?id=project')).workspace;
+    if(workspace.status!=='preparing') break;
+    await delay(100);
+  }
+  assert.equal(workspace.status,'ready',workspace.error);
+  assert.equal((await removeLocalWorkspace('project')).ok,true);
+  await assert.rejects(fetch(workspace.previewUrl));
+  assert.equal((await call('/tiana/api/workspaces')).items.length,0);
 });
