@@ -50,6 +50,7 @@
     "install.js",
     "tiana-api.js",
     "preview-bind.js",
+    "dev-preview.js",
     "confined-run.js",
     "client.js",
     "cordis.patch.yml",
@@ -77,6 +78,7 @@
     "esbuild": "^0.28.2",
     "playwright": "^1.65.1",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "vite": "^7.3.7"
   }
 }

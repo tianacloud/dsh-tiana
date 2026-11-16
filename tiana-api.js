@@ -15,12 +15,13 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, watch } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { probeSandboxSupport, runConfined } from './confined-run.js';
 import { dshHome, runCommand, tianaCommand } from './install.js';
 import { listenOnReservedAddresses } from './preview-bind.js';
@@ -216,13 +217,6 @@ function guidedLocale(input) {
 
 function guidedSessionCopy(locale) {
   return GUIDED_SESSION_TEXT[guidedLocale(locale)];
-}
-
-function localizedSandboxWarning(reason, locale) {
-  const detail = reason || 'unavailable';
-  return guidedLocale(locale) === 'zh'
-    ? `本次模板构建未启用 DSH 沙箱（${detail}）。`
-    : `The template build ran without the DSH sandbox (${detail}).`;
 }
 
 function localizedFunctionsWarning(locale) {
@@ -768,15 +762,14 @@ async function runSandboxedBuild(workspace, command, args, env, extraRoots) {
     cwd: workspace.directory,
     env: buildEnv,
     timeoutMs: WORKSPACE_BUILD_TIMEOUT_MS,
+    signal: workspace.previewAbort?.signal,
+    killProcessGroup: true,
   });
   workspace.sandbox = {
     confined: outcome.confined === true,
     enforcement: outcome.enforcement ?? null,
     reason: outcome.reason ?? null,
   };
-  if (!outcome.confined) {
-    addWarning(workspace, localizedSandboxWarning(outcome.reason, workspace.locale ?? workspace.dshSession?.locale));
-  }
   return outcome;
 }
 
@@ -897,7 +890,7 @@ async function loadWorkspaces() {
             status: 'stopped',
             phase: 'stopped',
             error: null,
-            warning: typeof item.warning === 'string' ? item.warning : null,
+            warning: typeof item.warning === 'string' ? item.warning.replace(/^本次模板构建未启用 DSH 沙箱（[\s\S]*?）。\s*|^The template build ran without the DSH sandbox \([\s\S]*?\)\.\s*/, '').trim() || null : null,
             sandbox: item.sandbox && typeof item.sandbox === 'object' ? item.sandbox : null,
             building: false,
             previewPort: null,
@@ -1165,7 +1158,7 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;');
 }
 
-function sdkShimSource() {
+export function sdkShimSource() {
   return [
     'export function createTianaFetch() {',
     '  return (input, init) => fetch(input, init);',
@@ -1261,7 +1254,7 @@ async function buildWorkspaceWithScript(workspace) {
       workspace,
       command,
       ['run', 'build', '--', '0'.repeat(40)],
-      { ...commandEnvironment(), TIANA_TEMPLATE_BUILD: '1' },
+      { ...commandEnvironment(), NODE_ENV: 'development', TIANA_TEMPLATE_BUILD: '1' },
       [],
     );
   } finally {
@@ -1334,7 +1327,7 @@ async function buildWorkspace(workspace) {
   await ensurePreviewIndex(workspace);
 }
 
-async function initWorkspaceDatabase(workspace) {
+export async function initWorkspaceDatabase(workspace) {
   const directory = workspace.directory;
   const metadata = await readTemplateMetadata(directory);
   const dataDir = workspaceDataDirectory(workspace.id);
@@ -1455,7 +1448,7 @@ function previewBootstrap(appId) {
   return `<script>window.tiana={appId:${JSON.stringify(appId)},auth:{getAccessToken:async()=>"local-preview"},connection:async()=>({origin:location.origin,sql_api:"hrana-v3"}),files:new Proxy({},{get:()=>async()=>{throw new Error("Files are not available in the local preview.")}}),functions:new Proxy({},{get:()=>async()=>{throw new Error("Functions are not available in the local preview.")}})};</script>`;
 }
 
-function injectPreviewBootstrap(html, appId) {
+export function injectPreviewBootstrap(html, appId) {
   if (html.includes('window.tiana')) return html;
   const tag = previewBootstrap(appId);
   const firstScript = html.search(/<script\b/i);
@@ -1501,6 +1494,24 @@ async function readRequestBody(req, limit = WORKSPACE_PREVIEW_BODY_BYTES) {
 }
 
 function closeWorkspaceServer(workspace) {
+  workspace.watcher?.close();
+  workspace.watcher = null;
+  clearTimeout(workspace.rebuildTimer);
+  workspace.previewAbort?.abort();
+  for (const res of workspace.liveClients ?? []) res.end();
+  workspace.liveClients?.clear();
+  const child = workspace.devProcess;
+  workspace.devProcess = null;
+  if (child && child.exitCode === null && child.signalCode === null) {
+    try { process.platform === 'win32' ? child.kill() : process.kill(-child.pid, 'SIGTERM'); } catch {}
+    workspace.devStopped = new Promise(resolveStop => {
+      const timer = setTimeout(() => {
+        try { process.platform === 'win32' ? child.kill('SIGKILL') : process.kill(-child.pid, 'SIGKILL'); } catch {}
+      }, 3000);
+      timer.unref();
+      child.once('exit', () => {clearTimeout(timer); resolveStop();});
+    });
+  }
   const servers = workspace.servers ?? [];
   workspace.servers = [];
   workspace.previewPort = null;
@@ -1514,6 +1525,7 @@ function closeWorkspaceServer(workspace) {
       // Already closed.
     }
   }
+  return Promise.all([workspace.devStopped, workspace.rebuildTask]);
 }
 
 function closeWorkspaceDatabase(workspace) {
@@ -1526,17 +1538,18 @@ function closeWorkspaceDatabase(workspace) {
 }
 
 async function startWorkspacePreview(workspace) {
-  closeWorkspaceServer(workspace);
+  await closeWorkspaceServer(workspace);
   if (workspace.outDir === null || workspace.outDir === undefined) {
     throw new Error('The template build output is missing.');
   }
   const indexPath = join(workspace.outDir, 'index.html');
   const rawIndex = await readFile(indexPath, 'utf8');
-  const html = injectPreviewBootstrap(rawIndex, workspace.appId);
+  const html = livePreviewHtml(rawIndex, workspace.appId);
   const token = randomBytes(18).toString('hex');
   const makeServer = () => createServer((req, res) => {
     void handleWorkspacePreviewRequest(req, res, {
-      html,
+      get html() { return workspace.indexHtml ?? html; },
+      workspace,
       token,
       distDir: workspace.outDir,
       db: workspace.db,
@@ -1555,18 +1568,19 @@ async function startWorkspacePreview(workspace) {
   workspace.indexHtml = html;
 }
 
-async function handleWorkspacePreviewRequest(req, res, context) {
+export async function handleWorkspacePreviewRequest(req, res, context) {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const cookie = req.headers.cookie ?? '';
   const supplied = url.searchParams.get('token');
-  const authorized = supplied === context.token || cookie.split(';').some((part) => part.trim() === `tiana_preview=${context.token}`);
+  const cookieName = `tiana_preview_${context.appId}`;
+  const authorized = supplied === context.token || cookie.split(';').some((part) => part.trim() === `${cookieName}=${context.token}`);
   if (!authorized) {
     res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
     return;
   }
   if (supplied === context.token) {
-    res.setHeader('set-cookie', `tiana_preview=${context.token}; Path=/; HttpOnly; SameSite=Lax`);
+    res.setHeader('set-cookie', `${cookieName}=${context.token}; Path=/; HttpOnly; SameSite=Lax`);
   }
   const securityHeaders = {
     'cache-control': 'no-store',
@@ -1575,6 +1589,14 @@ async function handleWorkspacePreviewRequest(req, res, context) {
     'referrer-policy': 'no-referrer',
     'x-frame-options': 'DENY',
   };
+  if (req.method === 'GET' && url.pathname === '/__tiana_live' && context.workspace) {
+    res.writeHead(200, { ...securityHeaders, 'content-type': 'text/event-stream', connection: 'keep-alive' });
+    res.write(': connected\n\n');
+    context.workspace.liveClients ??= new Set();
+    context.workspace.liveClients.add(res);
+    res.on('close', () => context.workspace.liveClients.delete(res));
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/v3/pipeline') {
     try {
       const body = await readRequestBody(req);
@@ -1630,6 +1652,99 @@ async function handleWorkspacePreviewRequest(req, res, context) {
   }
 }
 
+function livePreviewHtml(html, appId) {
+  return injectPreviewBootstrap(html, appId) + '<script>new EventSource("/__tiana_live").addEventListener("reload",()=>location.reload());</script>';
+}
+
+function watchWorkspaceSources(workspace) {
+  const controller = new AbortController();
+  workspace.previewAbort = controller;
+  let rebuilding = false;
+  let dirty = false;
+  const rebuild = async () => {
+    if (controller.signal.aborted || rebuilding) return;
+    rebuilding = true;
+    dirty = false;
+    try {
+      await buildWorkspace(workspace);
+      if (controller.signal.aborted) return;
+      workspace.indexHtml = livePreviewHtml(await readFile(join(workspace.outDir, 'index.html'), 'utf8'), workspace.appId);
+      workspace.error = null;
+      for (const res of workspace.liveClients ?? []) res.write('event: reload\ndata: ready\n\n');
+    } catch (error) {
+      if (!controller.signal.aborted) workspace.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      rebuilding = false;
+      if (dirty && !controller.signal.aborted) workspace.rebuildTimer = setTimeout(() => {workspace.rebuildTask = rebuild();}, 200);
+    }
+  };
+  workspace.watcher = watch(workspace.directory, {recursive: true}, (_event, filename) => {
+    const name = String(filename ?? '').replaceAll('\\', '/');
+    if (!name || /(^|\/)(node_modules|\.git|dist|build)(\/|$)/.test(name) || /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(name)) return;
+    const path = resolve(workspace.directory, name);
+    if (path === workspace.outDir || path.startsWith(`${workspace.outDir}${sep}`)) return;
+    dirty = true;
+    clearTimeout(workspace.rebuildTimer);
+    workspace.rebuildTimer = setTimeout(() => {workspace.rebuildTask = rebuild();}, 200);
+  });
+  workspace.watcher.on('error', error => {workspace.error = `Source watcher stopped: ${error.message}`;});
+}
+
+async function startDevelopmentPreview(workspace) {
+  const metadata = await readTemplateMetadata(workspace.directory);
+  if (metadata.functions !== undefined) addWarning(workspace, localizedFunctionsWarning(workspace.locale));
+  const previewRoot = join(dshHome(), 'tiana-plugin', 'previews', workspace.id);
+  const dataRoot = workspaceDataDirectory(workspace.id);
+  const temp = join(dshHome(), 'tiana-plugin', 'tmp');
+  await Promise.all([mkdir(previewRoot, {recursive: true}), mkdir(dataRoot, {recursive: true}), mkdir(temp, {recursive: true})]);
+  workspace.previewToken = randomBytes(18).toString('hex');
+  const settings = join(previewRoot, 'dev-settings.json');
+  await writeFile(settings, JSON.stringify({id: workspace.id, directory: workspace.directory, title: workspace.title, appId: workspace.appId, locale: workspace.locale, previewToken: workspace.previewToken, previewRoot}), {mode: 0o600});
+  const env = {...commandEnvironment(), NODE_ENV: 'development'};
+  let argv = [process.execPath, fileURLToPath(new URL('./dev-preview.js', import.meta.url)), settings];
+  const capability = workspace.sandboxOff ? {supported: false, reason: 'disabled by user'} : await sandboxCapability();
+  workspace.sandbox = {confined: false, enforcement: null, reason: capability.reason};
+  if (capability.supported) {
+    const wrapped = await resolveSandbox().confine(argv, {mode: 'workspace-write', workspaceRoot: workspace.directory, additionalWritableRoots: [previewRoot, dataRoot, temp]});
+    argv = wrapped.argv;
+    workspace.sandbox = {confined: true, enforcement: wrapped.enforcement ?? null, reason: null};
+  }
+  const child = spawn(argv[0], argv.slice(1), {cwd: workspace.directory, env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']});
+  workspace.devProcess = child;
+  let diagnostics = '';
+  child.stderr.on('data', chunk => {diagnostics = (diagnostics + chunk).slice(-4000);});
+  await new Promise((resolveReady, reject) => {
+    let line = '';
+    let ready = false;
+    const timer = setTimeout(() => reject(new Error('Development preview startup timed out.')), WORKSPACE_BUILD_TIMEOUT_MS);
+    child.stdout.on('data', chunk => {
+      line = (line + chunk).slice(-8000);
+      const match = line.match(/TIANA_DEV_READY (\{[^\n]+\})/);
+      if (!match || ready) return;
+      try {
+        const {port} = JSON.parse(match[1]);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid development preview port.');
+        workspace.previewPort = port;
+        ready = true;
+        clearTimeout(timer);
+        resolveReady();
+      } catch (error) {clearTimeout(timer); reject(error);}
+    });
+    child.once('error', error => {clearTimeout(timer);reject(error);});
+    child.once('exit', code => {
+      clearTimeout(timer);
+      if (!ready) reject(new Error(`Development preview failed (${code}). ${diagnostics}`));
+      else if (workspace.devProcess === child) {
+        workspace.devProcess = null;
+        workspace.status = 'failed';
+        workspace.error = `Development preview exited (${code}). ${diagnostics}`;
+        workspace.previewPort = null;
+        void persistWorkspaces();
+      }
+    });
+  });
+}
+
 async function prepareWorkspace(workspace, locale, { sandboxOff = false } = {}) {
   if (typeof locale === 'string' && locale.length > 0) workspace.locale = guidedLocale(locale);
   if (workspace.building) return;
@@ -1641,20 +1756,24 @@ async function prepareWorkspace(workspace, locale, { sandboxOff = false } = {}) 
   workspace.warning = null;
   workspace.sandbox = null;
   workspace.readyAt = null;
-  closeWorkspaceServer(workspace);
+  await closeWorkspaceServer(workspace);
+  workspace.previewAbort = new AbortController();
   closeWorkspaceDatabase(workspace);
   await persistWorkspaces();
   try {
     await installWorkspaceDependencies(workspace);
     workspace.phase = 'building';
     await persistWorkspaces();
-    await buildWorkspace(workspace);
-    workspace.phase = 'database';
-    await persistWorkspaces();
-    await initWorkspaceDatabase(workspace);
-    workspace.phase = 'starting';
-    await persistWorkspaces();
-    await startWorkspacePreview(workspace);
+    if (existsSync(join(workspace.directory, 'node_modules/vite/dist/node/index.js'))) {
+      await startDevelopmentPreview(workspace);
+    } else {
+      await buildWorkspace(workspace);
+      workspace.phase = 'database';
+      await initWorkspaceDatabase(workspace);
+      workspace.phase = 'starting';
+      await startWorkspacePreview(workspace);
+      watchWorkspaceSources(workspace);
+    }
     workspace.status = 'ready';
     workspace.phase = 'ready';
     workspace.readyAt = new Date().toISOString();
@@ -1905,7 +2024,7 @@ export async function stopLocalPreview(id) {
   const workspace = WORKSPACES.get(id);
   if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
   if (workspace.building) return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'Wait for the build to finish before stopping the preview.' } };
-  closeWorkspaceServer(workspace);
+  await closeWorkspaceServer(workspace);
   closeWorkspaceDatabase(workspace);
   workspace.status = 'stopped';
   workspace.phase = 'stopped';

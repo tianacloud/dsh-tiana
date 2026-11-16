@@ -84,6 +84,7 @@ export function runCommand(command, args, options = {}) {
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
     stdoutLimit,
+    killProcessGroup = false,
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -99,6 +100,7 @@ export function runCommand(command, args, options = {}) {
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        detached: killProcessGroup && process.platform !== 'win32',
         shell: process.platform === 'win32',
       });
     } catch (error) {
@@ -126,8 +128,14 @@ export function runCommand(command, args, options = {}) {
     };
     const stop = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
-      child.kill('SIGTERM');
-      killTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      const kill = signal => {
+        try {
+          if (killProcessGroup && process.platform !== 'win32') process.kill(-child.pid, signal);
+          else child.kill(signal);
+        } catch { /* Process already exited. */ }
+      };
+      kill('SIGTERM');
+      killTimer = setTimeout(() => kill('SIGKILL'), 5000);
     };
     const onAbort = () => {
       stop();

@@ -653,10 +653,10 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function openPreviewWindow() {
+    function openPreviewWindow(url) {
       try {
         if (typeof window === 'undefined') return null;
-        const popup = window.open('about:blank', '_blank');
+        const popup = window.open(url, '_blank');
         if (popup) {
           try {
             popup.opener = null;
@@ -741,6 +741,8 @@ window.__ModuleLoader__.load({
           return h('svg', common, h('path', { d: 'm6 9 6 6 6-6' }));
         case 'check':
           return h('svg', common, h('path', { d: 'm5 12 4 4L19 6' }));
+        case 'stop':
+          return h('svg', common, h('rect', { x: 5, y: 5, width: 14, height: 14, rx: 2 }));
         case 'download':
           return h('svg', common, h('path', { d: 'M12 3v12M7 10l5 5 5-5M4 21h16' }));
         default:
@@ -1725,21 +1727,17 @@ window.__ModuleLoader__.load({
         };
       }, [copyFolderBase, template.id]);
 
-      const openExisting = (item) => {
-        if (
-          item.dshSession?.ok === true
-          && item.dshSession.ready === true
-          && typeof onOpenSession === 'function'
-          && onOpenSession(item.dshSession.sessionId)
-        ) {
-          if (typeof onClose === 'function') onClose();
-          return;
+      const openExisting = async (item) => {
+        setDuplicateError(null);
+        try {
+          const payload = await tianaFetch(`/tiana/api/workspaces/session?id=${encodeURIComponent(item.id)}`, { method: 'POST' });
+          if (payload.error || !payload.session?.ready || typeof onOpenSession !== 'function' || !onOpenSession(payload.session.sessionId)) {
+            throw new Error(payload.error?.message || t('templates.duplicateOpenFailed'));
+          }
+          onClose?.();
+        } catch (cause) {
+          setDuplicateError(cause instanceof Error ? cause.message : String(cause));
         }
-        if (typeof item.previewUrl === 'string' && item.previewUrl.length > 0) {
-          window.open(item.previewUrl, '_blank', 'noopener,noreferrer');
-          return;
-        }
-        setDuplicateError(t('templates.duplicateOpenFailed'));
       };
 
       const poll = async (id) => {
@@ -2657,8 +2655,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState(null);
       const aliveRef = React.useRef(true);
-      const popupRef = React.useRef(null);
-      const navigatedRef = React.useRef(false);
+      const shouldOpenRef = React.useRef(false);
       const sessionKey = typeof sessionId === 'string' ? sessionId : '';
       const requestWorkspace = React.useCallback(async () => {
         if (sessionKey === '') return null;
@@ -2675,11 +2672,7 @@ window.__ModuleLoader__.load({
         setLoading(true);
         setBusy(false);
         setError(null);
-        if (popupRef.current !== null && !navigatedRef.current) {
-          closeAuthWindow(popupRef.current);
-        }
-        popupRef.current = null;
-        navigatedRef.current = false;
+        shouldOpenRef.current = false;
         if (sessionKey === '') {
           setLoading(false);
           return () => {};
@@ -2696,10 +2689,7 @@ window.__ModuleLoader__.load({
           });
         return () => {
           aliveRef.current = false;
-          if (popupRef.current !== null && !navigatedRef.current) {
-            closeAuthWindow(popupRef.current);
-          }
-          popupRef.current = null;
+          shouldOpenRef.current = false;
         };
       }, [requestWorkspace, sessionKey]);
 
@@ -2722,10 +2712,9 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (workspace?.status === 'ready') {
           setBusy(false);
-          if (popupRef.current !== null && !navigatedRef.current && workspace.previewUrl) {
-            popupRef.current.location.href = workspace.previewUrl;
-            navigatedRef.current = true;
-            popupRef.current = null;
+          if (shouldOpenRef.current && workspace.previewUrl) {
+            shouldOpenRef.current = false;
+            if (!openPreviewWindow(workspace.previewUrl)) setError(t('local.popupBlocked'));
           }
           if (!workspace.previewUrl) setError(t('preview.failed'));
           return;
@@ -2733,10 +2722,7 @@ window.__ModuleLoader__.load({
         if (workspace?.status === 'failed') {
           setBusy(false);
           setError(workspace.error || t('preview.failed'));
-          if (popupRef.current !== null && !navigatedRef.current) {
-            closeAuthWindow(popupRef.current);
-            popupRef.current = null;
-          }
+          shouldOpenRef.current = false;
         }
       }, [workspace, t]);
 
@@ -2744,9 +2730,7 @@ window.__ModuleLoader__.load({
         if (busy || workspace === null || workspace.status === 'preparing') return;
         setBusy(true);
         setError(null);
-        const popup = openPreviewWindow();
-        popupRef.current = popup;
-        navigatedRef.current = false;
+        shouldOpenRef.current = true;
         try {
           const prepParams = new URLSearchParams({ id: workspace.id });
           if (!readSandboxPreference()) prepParams.set('sandbox', 'off');
@@ -2757,8 +2741,7 @@ window.__ModuleLoader__.load({
           if (payload.error) throw new Error(payload.error.message);
           if (payload.workspace) setWorkspace(payload.workspace);
         } catch (cause) {
-          if (popup !== null && !navigatedRef.current) closeAuthWindow(popup);
-          popupRef.current = null;
+          shouldOpenRef.current = false;
           setError(cause instanceof Error ? cause.message : String(cause));
           setBusy(false);
         }
@@ -2789,7 +2772,7 @@ window.__ModuleLoader__.load({
             href: workspace.previewUrl,
             target: '_blank',
             rel: 'noopener noreferrer',
-            title: t('preview.title'),
+            title: error ?? t('preview.title'),
             style: baseStyle,
           },
           h(Icon, { name: 'globe', size: 13 }),
@@ -2820,7 +2803,7 @@ window.__ModuleLoader__.load({
         },
         h(Icon, { name: 'globe', size: 13 }),
         busy
-          ? t('preview.opening')
+          ? t('preview.building')
           : workspace.status === 'failed'
             ? t('preview.retry')
             : t('preview.start'),
@@ -2837,29 +2820,24 @@ window.__ModuleLoader__.load({
         if (!pending) return;
         const workspace = items.find(item => item.id === pending.id);
         if (workspace?.status === 'ready' && workspace.previewUrl && workspace.readyAt !== pending.readyAt) {
-          if (pending.popup && !pending.popup.closed) pending.popup.location.href = workspace.previewUrl;
-          else setActionError(t('local.popupBlocked'));
+          if (!openPreviewWindow(workspace.previewUrl)) setActionError(t('local.popupBlocked'));
           pendingPreview.current = null;
         } else if (workspace?.status === 'failed') {
-          closeAuthWindow(pending.popup);
           pendingPreview.current = null;
         }
       }, [items, t]);
       React.useEffect(() => () => {
-        closeAuthWindow(pendingPreview.current?.popup);
+        pendingPreview.current = null;
       }, []);
 
       const startPreview = async (workspace) => {
         if (busyId !== null) return;
         setBusyId(workspace.id);
         setActionError(null);
-        closeAuthWindow(pendingPreview.current?.popup);
-        const popup = openPreviewWindow();
-        pendingPreview.current = { id: workspace.id, popup, readyAt: workspace.readyAt };
+        pendingPreview.current = { id: workspace.id, readyAt: workspace.readyAt };
         try {
           await onPrepare(workspace.id, !useSandbox);
         } catch (cause) {
-          closeAuthWindow(popup);
           pendingPreview.current = null;
           setActionError(cause instanceof Error ? cause.message : String(cause));
         } finally {
@@ -3020,7 +2998,7 @@ window.__ModuleLoader__.load({
                         ),
                         h(
                           'div',
-                          { className: 'tiana-local-actions' },
+                          { className: 'tiana-local-actions', 'aria-busy': status === 'preparing' },
                           status === 'ready' && workspace.previewUrl
                             ? h(
                                 'a',
@@ -3052,19 +3030,6 @@ window.__ModuleLoader__.load({
                                       ? t('local.retryPreview')
                                       : t('local.startPreview'),
                                 ),
-                          status === 'ready'
-                            ? h(
-                                'button',
-                                {
-                                  type: 'button',
-                                  className: 'tiana-btn tiana-btn-ghost tiana-btn-small',
-                                  onClick: () => startPreview(workspace),
-                                  disabled: busyId !== null,
-                                },
-                                busyId === workspace.id ? t('local.building') : t('templates.retryBuild'),
-                              )
-                            : null,
-                          status === 'ready' ? h('button', { type: 'button', className: 'tiana-btn tiana-btn-ghost tiana-btn-small', disabled: busyId !== null, onClick: () => stopPreview(workspace) }, t('local.stopPreview')) : null,
                           workspace.dshWorkspace?.ok
                             ? h(
                                 'button',
@@ -3077,6 +3042,19 @@ window.__ModuleLoader__.load({
                                 t('local.openSession'),
                               )
                             : null,
+                          status === 'ready' ? h(
+                            'div', { className: 'tiana-preview-tools', role: 'group', 'aria-label': t('preview.title') },
+                            h('button', {
+                              type: 'button', className: 'tiana-icon-btn', title: t('templates.retryBuild'),
+                              'aria-label': t('templates.retryBuild'), disabled: busyId !== null,
+                              onClick: () => startPreview(workspace),
+                            }, h(Icon, { name: 'refresh', size: 15 })),
+                            h('button', {
+                              type: 'button', className: 'tiana-icon-btn tiana-stop-preview', title: t('local.stopPreview'),
+                              'aria-label': t('local.stopPreview'), disabled: busyId !== null,
+                              onClick: () => stopPreview(workspace),
+                            }, h(Icon, { name: 'stop', size: 14 })),
+                          ) : null,
                         ),
                       );
                     }),
@@ -3097,7 +3075,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState(null);
       const [opened, setOpened] = React.useState(false);
       const dialogRef = React.useRef(null);
-      const popupRef = React.useRef(null);
+      const shouldOpenRef = React.useRef(false);
       const aliveRef = React.useRef(true);
       const active = notice !== null && notice.sessionId === sessionId;
 
@@ -3143,10 +3121,7 @@ window.__ModuleLoader__.load({
           });
         return () => {
           aliveRef.current = false;
-          if (popupRef.current !== null) {
-            closeAuthWindow(popupRef.current);
-            popupRef.current = null;
-          }
+          shouldOpenRef.current = false;
         };
       }, [active, notice]);
 
@@ -3171,10 +3146,10 @@ window.__ModuleLoader__.load({
         if (!active || workspace === null) return;
         if (workspace.status === 'ready' && workspace.previewUrl) {
           setBusy(false);
-          if (popupRef.current !== null) {
-            popupRef.current.location.href = workspace.previewUrl;
-            popupRef.current = null;
-            setOpened(true);
+          if (shouldOpenRef.current) {
+            shouldOpenRef.current = false;
+            if (openPreviewWindow(workspace.previewUrl)) setOpened(true);
+            else setError(t('local.popupBlocked'));
           }
           if (!workspace.previewUrl) setError(t('installComplete.error'));
           return;
@@ -3182,20 +3157,14 @@ window.__ModuleLoader__.load({
         if (workspace.status === 'failed') {
           setBusy(false);
           setError(workspace.error || t('installComplete.error'));
-          if (popupRef.current !== null) {
-            closeAuthWindow(popupRef.current);
-            popupRef.current = null;
-          }
+          shouldOpenRef.current = false;
         }
       }, [active, workspace, t]);
 
       const dismiss = () => {
         clearInstallNotice();
         setNotice(null);
-        if (popupRef.current !== null) {
-          closeAuthWindow(popupRef.current);
-          popupRef.current = null;
-        }
+        shouldOpenRef.current = false;
         const dialog = dialogRef.current;
         if (dialog !== null && dialog.open) dialog.close();
       };
@@ -3203,12 +3172,11 @@ window.__ModuleLoader__.load({
       const openPreview = async () => {
         if (!active || busy || notice === null) return;
         if (workspace?.status === 'ready' && workspace.previewUrl) {
-          window.open(workspace.previewUrl, '_blank', 'noopener,noreferrer');
-          setOpened(true);
+          if (openPreviewWindow(workspace.previewUrl)) setOpened(true);
+          else setError(t('local.popupBlocked'));
           return;
         }
-        const popup = openPreviewWindow();
-        popupRef.current = popup;
+        shouldOpenRef.current = true;
         setBusy(true);
         setOpened(false);
         setError(null);
@@ -3223,16 +3191,8 @@ window.__ModuleLoader__.load({
             throw new Error(payload.error?.message || t('installComplete.error'));
           }
           setWorkspace(payload.workspace);
-          if (payload.workspace.status === 'ready' && payload.workspace.previewUrl) {
-            if (popup !== null) {
-              popup.location.href = payload.workspace.previewUrl;
-              popupRef.current = null;
-              setOpened(true);
-            }
-          }
         } catch (cause) {
-          if (popup !== null) closeAuthWindow(popup);
-          popupRef.current = null;
+          shouldOpenRef.current = false;
           setBusy(false);
           setError(cause instanceof Error ? cause.message : String(cause));
         }
@@ -4357,8 +4317,8 @@ window.__ModuleLoader__.load({
       .tiana-local-main { min-width: 0; }
       .tiana-local-row .tiana-local-card-head { justify-content: flex-start; gap: 8px; }
       .tiana-local-actions {
-        display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
-        gap: 6px; max-width: 260px; margin-top: 0; padding-top: 0;
+        display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end;
+        gap: 8px; max-width: none; margin-top: 0; padding-top: 0;
       }
       .tiana-local-grid {
         display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -4437,7 +4397,12 @@ window.__ModuleLoader__.load({
         font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-error-primary, #d05b5b);
         overflow-wrap: anywhere;
       }
-      .tiana-local-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 4px; }
+      .tiana-local-actions > .tiana-btn { min-height: 32px; white-space: nowrap; }
+      .tiana-preview-tools { display: inline-flex; align-items: center; gap: 2px; padding-left: 7px; border-left: 1px solid var(--dsw-alias-border-l1); }
+      .tiana-preview-tools .tiana-icon-btn { min-width: 32px; min-height: 32px; border-color: transparent; }
+      .tiana-preview-tools .tiana-icon-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+      @media (hover: hover) { .tiana-stop-preview:hover { color: var(--dsw-alias-state-error-primary, #c44343); background: color-mix(in srgb, currentColor 8%, transparent); } }
+      @media (pointer: coarse) { .tiana-preview-tools .tiana-icon-btn { min-width: 40px; min-height: 40px; } }
       .tiana-field-hint { display: block; margin-top: 4px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
       .tiana-duplicate {
         display: flex; flex-direction: column; gap: 8px;
@@ -4615,7 +4580,7 @@ window.__ModuleLoader__.load({
       }
       .tiana-fork-body > .tiana-auth-card { margin: 0; padding: 8px 0; max-width: none; gap: 6px; border: 0; border-radius: 0; }
       .tiana-fork-body > .tiana-auth-card .tiana-auth-icon { display: none; }
-      .tiana-install-options { display: flex; align-items: flex-start; gap: 10px; }
+      .tiana-install-options { display: flex; align-items: stretch; gap: 10px; }
       .tiana-install-options > .tiana-install-option { flex: 1 1 0; min-inline-size: 0; overflow-wrap: anywhere; }
       .tiana-install-option {
         display: flex; flex-direction: column; gap: 10px; padding: 12px;
@@ -4627,7 +4592,9 @@ window.__ModuleLoader__.load({
       .tiana-install-option-head { display: flex; align-items: flex-start; gap: 8px; }
       .tiana-install-option-head h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; }
       .tiana-install-option-head .tiana-auth-body { margin-top: 4px; max-width: none; text-align: left; }
-      .tiana-install-option-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .tiana-install-option-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+      .tiana-install-option > .tiana-btn { margin-top: auto; }
+      .tiana-install-option-actions > .tiana-btn { flex: 1; justify-content: center; }
       .tiana-install-field {
         display: flex; flex-direction: column; gap: 5px;
         font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary);
@@ -4874,7 +4841,7 @@ window.__ModuleLoader__.load({
         .tiana-table-head { display: none; }
         .tiana-local-row { grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: start; }
         .tiana-local-thumb { width: 72px; height: 56px; }
-        .tiana-local-actions { grid-column: 1 / -1; justify-content: flex-end; max-width: none; padding-left: 82px; }
+        .tiana-local-actions { grid-column: 1 / -1; justify-content: flex-start; max-width: none; padding-left: 0; }
         .tiana-site-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
         .tiana-site-share,
         .tiana-site-actions { padding-left: 92px; }

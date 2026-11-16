@@ -213,11 +213,12 @@ test('template search discards delayed pages, refresh returns to page one and cl
 test('local preview defaults to sandbox, opens a tab after build, stops, and resolves sessions', async t => {
   let workspace = {id: 'local-test', title: '本地测试', directory: '/fixture/project', status: 'stopped', createdAt: '2026-11-16T09:00:00Z', dshWorkspace: {ok: true, id: 'ws', title: '本地测试'}, dshSession: {ok: true, ready: true, sessionId: 'deleted'}};
   let supported = true;
+  let finishBuild;
   const {page, calls} = await setup(t, async url => {
     if (url.pathname.endsWith('/workspaces')) return {items: [workspace], sandbox: {supported}};
     if (url.pathname.endsWith('/workspaces/prepare')) {
       workspace = {...workspace, status: 'preparing', readyAt: null};
-      setTimeout(() => {workspace = {...workspace, status: 'ready', readyAt: 'now', previewUrl: origin + '/preview-fixture'}}, 300);
+      finishBuild = () => {workspace = {...workspace, status: 'ready', readyAt: String(Date.now()), previewUrl: origin + '/preview-fixture'};};
       return {workspace};
     }
     if (url.pathname.endsWith('/workspaces/stop')) {workspace = {...workspace, status: 'stopped', previewUrl: null}; return {ok: true};}
@@ -229,11 +230,24 @@ test('local preview defaults to sandbox, opens a tab after build, stops, and res
   assert.equal(await toggle.isChecked(), true);
   const popupPromise=page.waitForEvent('popup');
   await page.getByRole('button',{name:'启动预览',exact:true}).click();
+  await page.getByRole('button',{name:'预览构建中…',exact:true}).waitFor();
+  assert.equal(page.context().pages().length,1,'no blank tab during build');
+  await screenshot(page,'local-building-no-blank-tab');
+  finishBuild();
   const popup=await popupPromise; t.after(()=>popup.close());
   await popup.waitForURL(origin + '/preview-fixture');
   assert.equal(calls.some(c=>c.includes('/prepare?') && c.includes('sandbox=off')),false);
   await page.getByRole('button',{name:'停止预览',exact:true}).waitFor();
+  const actionBoxes=await page.locator('.tiana-local-actions button,.tiana-local-actions a').evaluateAll(items=>items.map(el=>{const r=el.getBoundingClientRect();return {y:r.y,height:r.height}}));
+  assert.equal(actionBoxes.length,4);
+  assert.ok(actionBoxes.every(box=>box.y===actionBoxes[0].y));
   await screenshot(page,'local-ready');
+  await page.setViewportSize({width:375,height:812});
+  const mobileBoxes=await page.locator('.tiana-local-actions button,.tiana-local-actions a').evaluateAll(items=>items.map(el=>{const r=el.getBoundingClientRect();return {y:r.y,x:r.x,right:r.right}}));
+  assert.ok(mobileBoxes.every(box=>box.y===mobileBoxes[0].y));
+  assert.ok(mobileBoxes.every(box=>box.x>=0 && box.right<=375));
+  await screenshot(page,'local-ready-narrow');
+  await page.setViewportSize({width:1440,height:1000});
   await page.getByRole('button',{name:'停止预览',exact:true}).click();
   await page.getByRole('button',{name:'启动预览',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'停止预览',exact:true}).count(),0);
@@ -245,4 +259,23 @@ test('local preview defaults to sandbox, opens a tab after build, stops, and res
   assert.equal(await toggle.isChecked(),false);
   assert.equal(await toggle.isDisabled(),true);
   await screenshot(page,'local-stopped-unsupported');
+});
+
+
+test('preview blocker leaves a ready link and never creates a waiting tab', async t => {
+  let workspace={id:'blocked',title:'预览拦截测试',directory:'/fixture/blocked',status:'stopped'};
+  const {page}=await setup(t,async url=>{
+    if(url.pathname.endsWith('/workspaces')) return {items:[workspace],sandbox:{supported:true}};
+    if(url.pathname.endsWith('/workspaces/prepare')) {
+      workspace={...workspace,status:'ready',readyAt:'ready',previewUrl:origin+'/preview-fixture'};
+      return {workspace};
+    }
+  });
+  await page.addInitScript(()=>{window.previewOpenCalls=[];window.open=url=>{window.previewOpenCalls.push(url);return null;};});
+  await page.goto(`${origin}/?section=local`);
+  await page.getByRole('button',{name:'启动预览',exact:true}).click();
+  await page.getByText('请允许弹出标签页，或点击打开预览。',{exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.previewOpenCalls),[origin+'/preview-fixture']);
+  assert.equal(await page.getByRole('link',{name:'打开预览',exact:true}).getAttribute('href'),origin+'/preview-fixture');
+  await screenshot(page,'local-popup-blocked');
 });

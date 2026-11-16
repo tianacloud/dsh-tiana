@@ -14,7 +14,7 @@ before(async () => {
       window.__ModuleLoader__ = {load({factory}) {
         let main, dictionary;
         const t = key => dictionary.zh[key] ?? key;
-        const ctx = {effect: fn => fn(), get: () => undefined,
+        const ctx = {effect: fn => fn(), get: name => name === 'uiWorkspace' ? {openSession: id => {window.openedSession=id;}} : undefined,
           locale: {register: (ns,value) => {dictionary=value}, bind: () => t, getLocale: () => ({active:'zh'})},
           slots: {inject: (name,fn) => fn(), register: (spec, component) => {if(spec.name==='main') main=component;}}};
         factory(name => {if(name==='react') return React; throw new Error(name)}).apply(ctx);
@@ -102,11 +102,19 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   assert.equal(calls.some(c => c.includes('/templates/clone')), false);
   const a = await cards.nth(0).boundingBox(), b = await cards.nth(1).boundingBox();
   assert.equal(a.y,b.y); assert.ok(a.x+a.width <= b.x);
+  const localButton=await dialog.getByRole('button',{name:'克隆到本地',exact:true}).boundingBox();
+  const cloudButton=await dialog.getByRole('link',{name:'打开网页版安装'}).boundingBox();
+  assert.equal(localButton.y,cloudButton.y);
+  assert.equal(localButton.height,cloudButton.height);
   await screenshot(page,'authenticated');
   await page.setViewportSize({width: 480, height: 900});
   const c = await cards.nth(0).boundingBox(), d = await cards.nth(1).boundingBox();
   assert.equal(c.y,d.y); assert.ok(c.x+c.width <= d.x);
   assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth));
+  const narrowLocal=await dialog.getByRole('button',{name:'克隆到本地',exact:true}).boundingBox();
+  const narrowCloud=await dialog.getByRole('link',{name:'打开网页版安装'}).boundingBox();
+  assert.equal(narrowLocal.y,narrowCloud.y);
+  assert.equal(narrowLocal.height,narrowCloud.height);
   await screenshot(page,'authenticated-narrow');
   await page.setViewportSize({width: 1440, height: 1000});
   await dialog.getByRole('button', {name: '关闭', exact: true}).click();
@@ -116,4 +124,23 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   await hidden();
   await screenshot(page,'signed-out');
 
+});
+
+
+test('stable template IDs detect existing installs and reuse the newest session', async t=>{
+  const {page,calls}=await setup(t,async url=>{
+    if(url.pathname.endsWith('/templates')) return {items:[{name:'tpl-stable-123',display_name:'已安装模板'}],categories:[],nextCursor:null,origin:'https://console.example.test'};
+    if(url.pathname.endsWith('/workspaces')) return {items:[{id:'local-existing',template:'tpl-stable-123',title:'已有项目',directory:'/fixture/existing',dshSession:{ok:true,ready:true,sessionId:'deleted-session'}}],sandbox:{supported:true}};
+    if(url.pathname.endsWith('/workspaces/session')) return {session:{ready:true,sessionId:'current-session'}};
+  });
+  await page.goto(origin);
+  await page.getByRole('button',{name:'安装',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByText('已有项目',{exact:true}).waitFor();
+  assert.equal(await dialog.getByRole('button',{name:'克隆到本地',exact:true}).count(),0);
+  await screenshot(page,'duplicate-existing');
+  await dialog.getByRole('button',{name:'打开已有项目',exact:true}).click();
+  await page.waitForFunction(()=>window.openedSession === 'current-session');
+  assert.ok(calls.some(c=>c==='/tiana/api/workspaces/session?id=local-existing'));
+  assert.equal(calls.some(c=>c.includes('/templates/clone')),false);
 });

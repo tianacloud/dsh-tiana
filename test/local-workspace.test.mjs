@@ -14,7 +14,7 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   await writeFile(join(directory,'package.json'),JSON.stringify({name:'preview-fixture',version:'1.0.0',scripts:{build:'node build.cjs'}}));
   await writeFile(join(directory,'build.cjs'),"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','<html><body>preview fixture</body></html>');");
   await mkdir(join(root,'tiana-plugin'));
-  await writeFile(join(root,'tiana-plugin','workspaces.json'),JSON.stringify({items:[{id:'project',directory,dshWorkspace:{ok:true,id:'workspace'},dshSession:{ok:true,ready:true,sessionId:'deleted'}}]}));
+  await writeFile(join(root,'tiana-plugin','workspaces.json'),JSON.stringify({items:[{id:'project',directory,warning:'本次模板构建未启用 DSH 沙箱（disabled by TIANA_LOCAL_BUILD_SANDBOX=off）。',dshWorkspace:{ok:true,id:'workspace'},dshSession:{ok:true,ready:true,sessionId:'deleted'}}]}));
   let items=[{sessionId:'other-project',cwd:'/other',blank:false},{sessionId:'latest',cwd:directory,blank:false},{sessionId:'older',cwd:directory,blank:false}];
   let created=0, failList=false;
   const events=[];
@@ -45,6 +45,7 @@ test('local workspace recovers deleted sessions and stops a real built preview',
     const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
     Promise.resolve(routes.get(path.split('?')[0])(req,res)).catch(reject);
   });
+  assert.equal((await call('/tiana/api/workspaces/status?id=project')).workspace.warning,null);
   await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
   assert.equal((await stopLocalPreview('project')).error.code,'WORKSPACE_BUSY');
   let workspace;

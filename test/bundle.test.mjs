@@ -37,6 +37,7 @@ test('package.json is configured for public npm and DSH bundle distribution', as
     'install.js',
     'tiana-api.js',
     'preview-bind.js',
+    'dev-preview.js',
     'confined-run.js',
     'client.js',
     'cordis.patch.yml',
@@ -50,7 +51,7 @@ test('package.json is configured for public npm and DSH bundle distribution', as
     assert.ok(pkg.files?.includes(requiredFile), `files should include ${requiredFile}`);
   }
 
-  for (const path of ['host-main.js', 'install.js', 'tiana-api.js', 'preview-bind.js', 'confined-run.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'scripts/bootstrap.mjs', 'README.md', 'README.en.md', 'LICENSE']) {
+  for (const path of ['host-main.js', 'install.js', 'tiana-api.js', 'preview-bind.js', 'dev-preview.js', 'confined-run.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'scripts/bootstrap.mjs', 'README.md', 'README.en.md', 'LICENSE']) {
     assert.ok(existsSync(join(ROOT, path)), `${path} should exist`);
   }
 });
@@ -85,7 +86,7 @@ test('locale metadata files are valid and reference existing detail documents', 
 });
 
 test('shipped documentation and source files contain no hardcoded local developer paths', async () => {
-  for (const file of ['README.md', 'README.en.md', 'host-main.js', 'install.js', 'tiana-api.js', 'preview-bind.js', 'confined-run.js', 'client.js', 'scripts/bootstrap.mjs']) {
+  for (const file of ['README.md', 'README.en.md', 'host-main.js', 'install.js', 'tiana-api.js', 'preview-bind.js', 'dev-preview.js', 'confined-run.js', 'client.js', 'scripts/bootstrap.mjs']) {
     const content = await readFile(join(ROOT, file), 'utf8');
     assert.doesNotMatch(content, /\/home\/liam\b/, `${file} must not contain local home path`);
     assert.doesNotMatch(content, /@local\/dsh-tiana/, `${file} must not contain @local/dsh-tiana`);
