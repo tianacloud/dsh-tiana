@@ -1,12 +1,12 @@
 /**
- * First-activation bootstrap for the Tiana plugin.
+ * Latest-toolchain bootstrap for the Tiana plugin.
  *
  * Installing this bundle should leave the machine ready to use Tiana:
- * - the `tiana` CLI is installed when missing or older than the supported floor;
+ * - the `tiana` CLI is installed or updated to npm latest;
  * - the official Tiana agent skills are installed into the DSH-owned skill root
  *   (`$DSH_HOME/skills`), never the shared `~/.agents/skills`.
  *
- * The bootstrap is idempotent and cheap once both parts are present. It runs
+ * Existing CLI and official skills are refreshed as well. The bootstrap runs
  * from the Host plugin's `apply()` and can also be invoked manually through
  * `scripts/bootstrap.mjs`. State is written under `$DSH_HOME/tiana-plugin/`.
  */
@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { access, mkdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 import { delimiter, dirname, join } from 'node:path';
 
 const CLI_PACKAGE = '@tianacloud/cli@latest';
@@ -24,7 +25,7 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const CLI_CHECK_TIMEOUT_MS = 15 * 1000;
 
 /** Tiana CLI versions below this floor are upgraded during bootstrap. */
-export const MIN_CLI_VERSION = [1, 0, 17];
+export const MIN_CLI_VERSION = [1, 0, 30];
 
 /** Skills supplied by the official Tiana agent-skills package. */
 export const SKILL_NAMES = [
@@ -73,6 +74,7 @@ export function statePath(env = process.env) {
  * @param {NodeJS.ProcessEnv} [options.env] - child environment.
  * @param {number} [options.timeoutMs] - hard timeout.
  * @param {AbortSignal} [options.signal] - cancellation.
+ * @param {number} [options.stdoutLimit] - capture complete stdout up to this character limit, failing on overflow.
  * @returns {Promise<{code: number|null, signal: string|null, stdout: string, stderr: string, command: string, args: readonly string[]}>}
  */
 export function runCommand(command, args, options = {}) {
@@ -81,6 +83,7 @@ export function runCommand(command, args, options = {}) {
     env = process.env,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
+    stdoutLimit,
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -104,6 +107,7 @@ export function runCommand(command, args, options = {}) {
     }
 
     let stdout = '';
+    const stdoutDecoder = new StringDecoder('utf8');
     let stderr = '';
     let settled = false;
     let timeout;
@@ -140,9 +144,15 @@ export function runCommand(command, args, options = {}) {
       }));
     }, timeoutMs);
 
-    child.stdout?.on('data', (chunk) => {
-      stdout = tail(stdout, chunk);
-    });
+    const collectStdout = (text) => {
+      if (settled) return;
+      stdout = stdoutLimit === undefined ? tail(stdout, text) : stdout + text;
+      if (stdoutLimit !== undefined && stdout.length > stdoutLimit) {
+        stop();
+        finish(reject, Object.assign(new Error('Tiana CLI JSON output exceeded its size limit.'), { code: 'CLI_OUTPUT_TOO_LARGE' }));
+      }
+    };
+    child.stdout?.on('data', (chunk) => collectStdout(stdoutDecoder.write(chunk)));
     child.stderr?.on('data', (chunk) => {
       stderr = tail(stderr, chunk);
     });
@@ -150,13 +160,14 @@ export function runCommand(command, args, options = {}) {
       finish(reject, Object.assign(error, { command, args }));
     });
     child.on('close', (code, signalName) => {
+      collectStdout(stdoutDecoder.end());
       finish(resolve, { code, signal: signalName, stdout, stderr, command, args });
     });
   });
 }
 
 /**
- * Install the CLI and DSH-only skills when they are not already present.
+ * Install or refresh the CLI and DSH-only official skills to latest.
  * @param {object} [options] - bootstrap options.
  * @param {NodeJS.ProcessEnv} [options.env] - environment to read.
  * @param {(message: string) => void} [options.log] - progress sink.
@@ -191,20 +202,11 @@ async function runBootstrap({ env = process.env, log = () => {}, run = runComman
     throwIfAborted(signal);
 
     const before = await readCliVersion(env, run, signal);
-    let after = before;
-    if (before === undefined) {
-      log('Tiana CLI is missing; installing it');
-      await installCli(env, run, log, signal);
-      state.cli.installed = true;
-      after = await readCliVersion(env, run, signal);
-    } else if (!versionAtLeast(before, MIN_CLI_VERSION)) {
-      log(`Tiana CLI ${before.join('.')} is below ${MIN_CLI_VERSION.join('.')}; upgrading it`);
-      await installCli(env, run, log, signal);
-      state.cli.upgraded = true;
-      after = await readCliVersion(env, run, signal);
-    } else {
-      state.cli.skipped = true;
-    }
+    log('Installing or updating the Tiana CLI to npm latest');
+    await installCli(env, run, log, signal);
+    state.cli.installed = before === undefined;
+    state.cli.upgraded = before !== undefined;
+    const after = await readCliVersion(env, run, signal);
 
     if (after === undefined) {
       throw new Error('Tiana CLI is still unavailable after installation');
@@ -215,16 +217,12 @@ async function runBootstrap({ env = process.env, log = () => {}, run = runComman
     state.cli.version = after.join('.');
 
     throwIfAborted(signal);
-    if (await skillsPresent(skillsDir)) {
-      state.skills.skipped = true;
-    } else {
-      log(`Installing Tiana skills into ${skillsDir}`);
-      await installSkills(env, skillsDir, run, log, signal);
-      if (!(await skillsPresent(skillsDir))) {
-        throw new Error(`Tiana skills are incomplete under ${skillsDir}`);
-      }
-      state.skills.installed = true;
+    log(`Installing or updating Tiana skills to npm latest in ${skillsDir}`);
+    await installSkills(env, skillsDir, run, log, signal);
+    if (!(await skillsPresent(skillsDir))) {
+      throw new Error(`Tiana skills are incomplete under ${skillsDir}`);
     }
+    state.skills.installed = true;
 
     state.status = 'ok';
     state.finishedAt = new Date().toISOString();

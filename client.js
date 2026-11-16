@@ -97,6 +97,10 @@ window.__ModuleLoader__.load({
       'nav.local': 'Local projects',
       'nav.templates': 'Templates',
       'nav.footer': 'Tiana Cloud',
+      'pagination.label': 'Pages',
+      'pagination.previous': 'Previous page',
+      'pagination.next': 'Next page',
+      'pagination.page': 'Page',
       'common.close': 'Dismiss',
       'common.cancel': 'Cancel',
       'local.title': 'Local projects',
@@ -125,7 +129,7 @@ window.__ModuleLoader__.load({
       'local.sandbox.unsupported': 'Sandbox is not supported on this machine',
       'sites.title': 'Sites',
       'sites.subtitle': 'Manage your Tiana web apps and the sites shared with you.',
-      'sites.search': 'Search sites',
+      'sites.search': 'Search names or instance IDs',
       'sites.tab.mine': 'Your sites',
       'sites.tab.shared': 'Shared with you',
       'sites.tab.all': 'All',
@@ -139,6 +143,7 @@ window.__ModuleLoader__.load({
       'templates.title': 'Tiana marketplace',
       'templates.subtitle': 'Pick a template, preview it, install it, or download its source.',
       'templates.search': 'Search templates',
+      'templates.refresh': 'Refresh templates',
       'templates.category.all': 'All',
       'templates.installs': 'installs',
       'templates.copies': 'customizations',
@@ -146,20 +151,21 @@ window.__ModuleLoader__.load({
       'templates.official': 'Official',
       'templates.noCover': 'No cover',
       'templates.detail': 'Template details',
-      'templates.loadingMore': 'Loading more templates…',
-      'templates.loadMoreError': 'Could not load more templates.',
+      'templates.loadingMore': 'Loading template page…',
+      'templates.loadMoreError': 'Could not load this template page.',
       'templates.retryMore': 'Retry',
-      'templates.allLoaded': 'All templates loaded',
+      'templates.allLoaded': 'Last page',
       'templates.previewUnavailable': 'Preview is unavailable for this template.',
       'templates.copyPrompt': 'Copy prompt',
       'templates.copiedPrompt': 'Prompt copied',
       'templates.promptCopyFailed': 'Automatic copy failed. Select the prompt below and copy it manually.',
       'templates.chooseInstall': 'Install template',
-      'templates.forkHint': 'Choose where the template should go. Local clone registers a DSH workspace and builds the real app; Tiana install creates cloud resources.',
-      'templates.cloneTitle': 'Clone locally and build',
-      'templates.cloneBody': 'Downloads the complete source, registers a DSH workspace, installs dependencies, builds the cloned app, and opens it with a local SQLite mock.',
+      'templates.installLogin': 'Sign in to install this template.',
+      'templates.forkHint': 'Choose an installation method.',
+      'templates.cloneTitle': 'Clone locally',
+      'templates.cloneBody': 'Download the source and make it your own.',
       'templates.cloneDir': 'Target directory (optional)',
-      'templates.cloneAction': 'Clone and build',
+      'templates.cloneAction': 'Clone locally',
       'templates.checkingLocal': 'Checking local installs…',
       'templates.localDuplicateTitle': 'Already installed locally',
       'templates.localDuplicateBody': 'This template already has a local project. Open it, or clone another copy into a new folder.',
@@ -213,8 +219,8 @@ window.__ModuleLoader__.load({
       'templates.cloneFailed': 'Could not clone the template.',
       'templates.previewOpen': 'Open preview',
       'templates.clonePath': 'Directory',
-      'templates.installTianaTitle': 'Install to Tiana',
-      'templates.installTianaBody': 'Opens the Tiana web marketplace to create a hosted app. Login and space selection happen in the web version.',
+      'templates.installTianaTitle': 'Install to a Tiana space',
+      'templates.installTianaBody': 'Install online and use it right away.',
       'templates.installTianaAction': 'Open web install',
       'templates.preview': 'Preview',
       'templates.install': 'Install',
@@ -226,7 +232,7 @@ window.__ModuleLoader__.load({
       'auth.connected': 'Connected to Tiana',
       'space.label': 'Space',
       'space.loading': 'Loading spaces…',
-      'space.confirm': 'Switching space may require another browser sign-in. Continue?',
+      'space.confirm': 'Switch to this space?',
       'space.none': 'No spaces available',
       'space.switch': 'Switch',
       'space.cancel': 'Cancel',
@@ -313,7 +319,11 @@ window.__ModuleLoader__.load({
       'local.sandbox.unsupported': '本机不支持沙箱，无法开启',
       'sites.title': '站点',
       'sites.subtitle': '管理你的 Tiana Web 应用，或查看其他人分享给你的站点。',
-      'sites.search': '搜索站点',
+      'pagination.label': '分页',
+      'pagination.previous': '上一页',
+      'pagination.next': '下一页',
+      'pagination.page': '页码',
+      'sites.search': '搜索名称或实例 ID',
       'sites.tab.mine': '你的网站',
       'sites.tab.shared': '与你共享',
       'sites.tab.all': '全部',
@@ -327,6 +337,7 @@ window.__ModuleLoader__.load({
       'templates.title': 'Tiana 应用市场',
       'templates.subtitle': '从市场挑选模板，预览后安装，或下载源码继续修改。',
       'templates.search': '搜索模板',
+      'templates.refresh': '刷新模板',
       'templates.category.all': '全部',
       'templates.installs': '次安装',
       'templates.copies': '次定制',
@@ -334,20 +345,21 @@ window.__ModuleLoader__.load({
       'templates.official': '官方',
       'templates.noCover': '暂无封面',
       'templates.detail': '模板详情',
-      'templates.loadingMore': '正在加载更多模板…',
-      'templates.loadMoreError': '加载更多模板失败。',
+      'templates.loadingMore': '正在加载模板页…',
+      'templates.loadMoreError': '加载该页模板失败。',
       'templates.retryMore': '重试',
-      'templates.allLoaded': '已加载全部模板',
+      'templates.allLoaded': '已到最后一页',
       'templates.previewUnavailable': '此模板暂不可预览。',
       'templates.copyPrompt': '复刻提示词',
       'templates.copiedPrompt': '提示词已复刻',
       'templates.promptCopyFailed': '自动复制失败，请选择下方提示词手动复刻。',
       'templates.chooseInstall': '安装模板',
-      'templates.forkHint': '选择模板去向：本地克隆会注册 DSH 工作区并构建真实应用；Tiana 安装会创建云端资源。',
-      'templates.cloneTitle': '克隆到本地并构建',
-      'templates.cloneBody': '下载完整源码，注册 DSH 工作区，安装依赖并构建真实应用，用本地 SQLite mock 打开克隆版本。',
+      'templates.installLogin': '登录后即可安装模板。',
+      'templates.forkHint': '选择一种安装方式',
+      'templates.cloneTitle': '克隆到本地',
+      'templates.cloneBody': '下载源码，自由修改。',
       'templates.cloneDir': '目标目录（可选）',
-      'templates.cloneAction': '克隆并构建',
+      'templates.cloneAction': '克隆到本地',
       'templates.checkingLocal': '正在检测本地安装…',
       'templates.localDuplicateTitle': '本地已安装该模板',
       'templates.localDuplicateBody': '这个模板已经有本地项目。可以直接打开已有项目，或在新文件夹里再克隆一份。',
@@ -401,8 +413,8 @@ window.__ModuleLoader__.load({
       'templates.cloneFailed': '模板克隆失败。',
       'templates.previewOpen': '打开预览',
       'templates.clonePath': '目录',
-      'templates.installTianaTitle': '安装到 Tiana',
-      'templates.installTianaBody': '打开 Tiana 网页版应用市场创建托管应用；登录和空间选择在网页版完成。',
+      'templates.installTianaTitle': '安装到 Tiana 空间',
+      'templates.installTianaBody': '在线安装，直接使用。',
       'templates.installTianaAction': '打开网页版安装',
       'templates.preview': '预览',
       'templates.install': '安装',
@@ -414,7 +426,7 @@ window.__ModuleLoader__.load({
       'auth.connected': '已连接 Tiana',
       'space.label': '空间',
       'space.loading': '正在加载空间…',
-      'space.confirm': '切换空间后可能需要重新登录，继续吗？',
+      'space.confirm': '切换到此空间？',
       'space.none': '没有可用空间',
       'space.switch': '切换',
       'space.cancel': '取消',
@@ -535,16 +547,16 @@ window.__ModuleLoader__.load({
         author: (item.space_name || item.author?.display_name || '').trim(),
         official: item.is_official === true,
         tags: Array.isArray(item.tags) ? item.tags.filter((tag) => typeof tag === 'string') : [],
-        installs: typeof installs === 'number' ? String(installs) : null,
-        copies: typeof copies === 'number' ? String(copies) : null,
-        version: typeof item.version === 'number' ? String(item.version) : '',
+        installs: typeof installs === 'string' || typeof installs === 'number' ? String(installs) : null,
+        copies: typeof copies === 'string' || typeof copies === 'number' ? String(copies) : null,
+        version: typeof item.version === 'string' || typeof item.version === 'number' ? String(item.version) : '',
         hasCover: typeof item.cover_url === 'string' && item.cover_url.length > 0,
         enabled: item.enabled !== false,
         accent: accentAt(index),
       };
     }
 
-    const TEMPLATE_CATALOG_CACHE_KEY = 'tiana.templateCatalogCache.v1';
+    const TEMPLATE_CATALOG_CACHE_KEY = 'tiana.templateCatalogCache.v2';
     const TEMPLATE_CATALOG_CACHE_TTL_MS = 24 * 60 * 60_000;
 
     function readTemplateCatalogCache() {
@@ -584,6 +596,7 @@ window.__ModuleLoader__.load({
       return {
         loading: false,
         loadingMore: false,
+        page: 1,
         items: cache.items.map((item, index) => mapTemplate(item, index, categoryNames)),
         categories,
         nextCursor: typeof cache.nextCursor === 'string' ? cache.nextCursor : null,
@@ -1167,7 +1180,6 @@ window.__ModuleLoader__.load({
       switchingSpace,
       spaceError,
       onSwitchSpace,
-      canSwitchSpaces,
       settingsUrl,
     }) {
       const connected = auth.phase === 'authenticated';
@@ -1179,7 +1191,7 @@ window.__ModuleLoader__.load({
           : t('auth.login');
       return h(
         'div',
-        { className: 'tiana-account' },
+        { className: `tiana-account${connected && spaces.length > 1 ? ' has-spaces' : ''}` },
         connected
           ? h(
               'div',
@@ -1188,7 +1200,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'tiana-account-label' }, t('auth.connected')),
               h(
                 'button',
-                { type: 'button', className: 'tiana-account-action', onClick: onLogout },
+                { type: 'button', className: 'tiana-account-action', onClick: onLogout, disabled: switchingSpace !== null },
                 t('auth.logout'),
               ),
             )
@@ -1197,7 +1209,7 @@ window.__ModuleLoader__.load({
               { type: 'button', className: 'tiana-account-login', onClick: onLogin, disabled: loginBusy },
               loginLabel,
             ),
-        connected && canSwitchSpaces === true
+        connected && spaces.length > 1
           ? h(
               'div',
               { className: 'tiana-space-row' },
@@ -1212,6 +1224,7 @@ window.__ModuleLoader__.load({
               }),
             )
           : null,
+        spaceError ? h('p', { className: 'tiana-space-error', role: 'alert' }, spaceError.message) : null,
         connected && typeof settingsUrl === 'string' && settingsUrl.length > 0
           ? h(
               'a',
@@ -1636,7 +1649,8 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function InstallChoiceDialog({ t, template, installUrl, onClose, onOpenSession }) {
+    function InstallChoiceDialog({ t, template, installUrl, onClose, onOpenSession, auth, authControls }) {
+      const authenticated = auth.phase === 'authenticated';
       const [directory, setDirectory] = React.useState('');
       const [cloning, setCloning] = React.useState(false);
       const [building, setBuilding] = React.useState(false);
@@ -1774,7 +1788,7 @@ window.__ModuleLoader__.load({
       };
 
       const clone = async () => {
-        if (locked) return;
+        if (!authenticated || locked) return;
         if (existingLocal === null) return;
         if (existingLocal.length > 0 && duplicateMode !== 'new') {
           setDuplicateError(t('templates.localDuplicateBody'));
@@ -1927,6 +1941,8 @@ window.__ModuleLoader__.load({
             h('h2', { className: 'tiana-dialog-title' }, template.title),
             h(TemplateAuthor, { template, t }),
             h('p', { className: 'tiana-dialog-desc' }, t('templates.forkHint')),
+            authenticated ? null : h(AuthGate, { t, auth, ...authControls, reason: t('templates.installLogin') }),
+            h('div', { className: 'tiana-install-options' },
             h(
               'section',
               { className: 'tiana-install-option' },
@@ -1941,7 +1957,7 @@ window.__ModuleLoader__.load({
                   h('p', { className: 'tiana-auth-body' }, t('templates.cloneBody')),
                 ),
               ),
-              existingLocal === null
+              !authenticated ? null : existingLocal === null
                 ? h('p', { className: 'tiana-auth-note' }, t('templates.checkingLocal'))
                 : duplicateFound && !duplicateNew
                   ? h(
@@ -2147,7 +2163,7 @@ window.__ModuleLoader__.load({
                   h('p', { className: 'tiana-auth-body' }, t('templates.installTianaBody')),
                 ),
               ),
-              installUrl && !locked
+              !authenticated ? null : installUrl && !locked
                 ? h(
                     'a',
                     {
@@ -2164,6 +2180,7 @@ window.__ModuleLoader__.load({
                     { type: 'button', className: 'tiana-btn tiana-btn-primary', disabled: true },
                     t('templates.installTianaAction'),
                   ),
+            ),
             ),
           ),
         ),
@@ -2232,12 +2249,22 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function Pagination({ t, page, totalPages, busy, hasNext, onPrevious, onNext }) {
+      return h('nav', { className: 'tiana-pagination', 'aria-label': t('pagination.label') },
+        h('button', { type: 'button', className: 'tiana-btn tiana-btn-ghost tiana-btn-small',
+          disabled: busy || page <= 1, onClick: onPrevious }, t('pagination.previous')),
+        h('span', { role: 'status' }, `${t('pagination.page')} ${page}${totalPages ? ` / ${totalPages}` : ''}`),
+        h('button', { type: 'button', className: 'tiana-btn tiana-btn-ghost tiana-btn-small',
+          disabled: busy || !hasNext, onClick: onNext }, t('pagination.next')),
+      );
+    }
+
     function SitesView({
       t, sites, tab, setTab, query, setQuery, onCreate,
       onNotice, notice, onCloseNotice,
       auth, login, onStartLogin, onOpenLogin, onCopyLogin, onRetryStatus,
       sitesLoading, sitesError, onRetrySites, sharedUnavailable,
-      onDeleteSite, onRefreshSites,
+      onDeleteSite, onRefreshSites, page, total, totalPages, onPrevious, onNext,
     }) {
       const authenticated = auth.phase === 'authenticated';
       const sharedEmpty = tab === 'shared' && sharedUnavailable;
@@ -2320,7 +2347,7 @@ window.__ModuleLoader__.load({
                 h(Spinner, null),
                 h('div', { className: 'tiana-state-title' }, t('sites.loading')),
               )
-            : sitesError !== null
+            : sitesError !== null && sites.length === 0
               ? h(StateView, {
                   title: t('sites.loadError'),
                   message: sitesError.message,
@@ -2346,6 +2373,7 @@ window.__ModuleLoader__.load({
                       ),
                     ),
                   ),
+                  sitesError === null ? null : h('p', { className: 'tiana-load-more-error', role: 'alert' }, sitesError.message),
                   sites.length === 0
                     ? h(EmptyState, { title: emptyTitle, hint: emptyHint })
                     : h(
@@ -2363,8 +2391,9 @@ window.__ModuleLoader__.load({
                   h(
                     'p',
                     { className: 'tiana-list-footer' },
-                    `${sites.length} ${t('sites.count')}`,
+                    `${sites.length} / ${sharedEmpty ? 0 : total} ${t('sites.count')}`,
                   ),
+                  sharedEmpty ? null : h(Pagination, { t, page, totalPages, busy: sitesLoading, hasNext: page < totalPages, onPrevious, onNext }),
                 )
           : h(AuthGate, {
               t,
@@ -2395,9 +2424,9 @@ window.__ModuleLoader__.load({
 
     function TemplatesView({
       t, templates, categories, query, setQuery, category, setCategory,
-      onNotice, notice, onCloseNotice, auth,
+      onNotice, notice, onCloseNotice, auth, authControls,
       templatesLoading, templatesLoadingMore, templatesError, templatesMoreError,
-      onRetryTemplates, onLoadMore, onRetryMore, hasMore,
+      onRetryTemplates, onLoadMore, onRetryMore, hasMore, page, onPrevious,
       installOrigin, onOpenSession,
     }) {
       const authenticated = auth.phase === 'authenticated';
@@ -2405,7 +2434,6 @@ window.__ModuleLoader__.load({
       const [installTarget, setInstallTarget] = React.useState(null);
       const [detail, setDetail] = React.useState({ loading: false, item: null, error: null });
       const [detailAttempt, setDetailAttempt] = React.useState(0);
-      const sentinelRef = React.useRef(null);
       const categoryOptions = [
         { id: 'all', label: t('templates.category.all') },
         ...(categories ?? []).map((item) => ({ id: String(item.id), label: item.name })),
@@ -2413,7 +2441,7 @@ window.__ModuleLoader__.load({
       const categoryNames = new Map((categories ?? []).map((item) => [String(item.id), item.name]));
       const installUrlFor = (name) => {
         if (typeof installOrigin !== 'string' || installOrigin.length === 0) return null;
-        const params = new URLSearchParams({ template: name, install: '1', _from: ACQUISITION_SOURCE });
+        const params = new URLSearchParams({ template_id: name, install: '1', _from: ACQUISITION_SOURCE });
         return `${installOrigin}/marketplace?${params.toString()}`;
       };
       const detailTemplate = detail.item ? mapTemplate(detail.item, 0, categoryNames) : null;
@@ -2459,25 +2487,6 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKey);
       }, [selectedName]);
 
-      React.useEffect(() => {
-        if (
-          !hasMore
-          || templatesLoading
-          || templatesLoadingMore
-          || templatesMoreError !== null
-          || typeof IntersectionObserver === 'undefined'
-        ) {
-          return undefined;
-        }
-        const node = sentinelRef.current;
-        if (node === null) return undefined;
-        const observer = new IntersectionObserver((entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) onLoadMore();
-        }, { rootMargin: '320px 0px' });
-        observer.observe(node);
-        return () => observer.disconnect();
-      }, [hasMore, templatesLoading, templatesLoadingMore, templatesMoreError, onLoadMore]);
-
       const openDetail = (name) => {
         setDetail({ loading: true, item: null, error: null });
         setSelectedName(name);
@@ -2514,6 +2523,9 @@ window.__ModuleLoader__.load({
               onChange: setQuery,
               placeholder: t('templates.search'),
             }),
+            h('button', { type: 'button', className: 'tiana-icon-btn', onClick: onRetryTemplates,
+              disabled: templatesLoading || templatesLoadingMore, title: t('templates.refresh'),
+              'aria-label': t('templates.refresh') }, h(Icon, { name: 'refresh', size: 16 })),
           ),
         ),
         notice === null ? null : h(Notice, { text: t(notice), onClose: onCloseNotice, t }),
@@ -2566,7 +2578,7 @@ window.__ModuleLoader__.load({
                       }),
                     ),
                   ),
-                  h('div', { ref: sentinelRef, className: 'tiana-scroll-sentinel', 'aria-hidden': 'true' }),
+                  h(Pagination, { t, page, busy: templatesLoading || templatesLoadingMore, hasNext: hasMore, onPrevious, onNext: onLoadMore }),
                   templatesLoadingMore
                     ? h(
                         'div',
@@ -2615,6 +2627,8 @@ window.__ModuleLoader__.load({
           ? null
           : h(InstallChoiceDialog, {
               t,
+              auth,
+              authControls,
               template: installTarget,
               installUrl: installUrlFor(installTarget.id),
               onClose: () => setInstallTarget(null),
@@ -3315,12 +3329,14 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState(null);
       const [auth, setAuth] = React.useState({ phase: 'checking', error: null });
       const [login, setLogin] = React.useState(null);
-      const [sitesData, setSitesData] = React.useState({ loading: false, items: [], error: null });
+      const [sitesData, setSitesData] = React.useState({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
+      const siteRequestRef = React.useRef(0);
+      const siteBusyRef = React.useRef(false);
+      const siteRetryRef = React.useRef(1);
       const [spacesData, setSpacesData] = React.useState({
         loading: false,
         items: [],
         currentTenantId: null,
-        canCreateSpace: false,
         switching: null,
         error: null,
       });
@@ -3339,6 +3355,7 @@ window.__ModuleLoader__.load({
       const [templateInitialCache] = React.useState(() => readTemplateCatalogCache());
       const [templatesData, setTemplatesData] = React.useState(() => (
         templatesDataFromCache(templateInitialCache) ?? {
+          page: 1,
           loading: true,
           loadingMore: false,
           items: [],
@@ -3350,8 +3367,12 @@ window.__ModuleLoader__.load({
         }
       ));
       const loginStartingRef = React.useRef(false);
+      const switchingSpaceRef = React.useRef(false);
+      const spacesRequestRef = React.useRef(0);
       const templateRequestRef = React.useRef(0);
       const templateLoadingMoreRef = React.useRef(false);
+      const templateCursorsRef = React.useRef(['']);
+      const templateRetryRef = React.useRef(null);
       const templateCacheSkipRef = React.useRef(templateInitialCache !== null);
 
       const authenticated = auth.phase === 'authenticated';
@@ -3377,27 +3398,28 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
-      const loadSites = React.useCallback(async () => {
-        setSitesData({ loading: true, items: [], error: null });
+      const loadSites = React.useCallback(async (page = 1) => {
+        if (siteBusyRef.current || switchingSpaceRef.current) return;
+        siteBusyRef.current = true;
+        const requestId = ++siteRequestRef.current;
+        siteRetryRef.current = page;
+        setSitesData((current) => ({ ...current, loading: true, error: null }));
         try {
-          const payload = await tianaFetch('/tiana/api/sites');
-          if (payload.error) {
-            setSitesData({ loading: false, items: [], error: payload.error });
-            return;
-          }
-          setSitesData({
-            loading: false,
-            items: (payload.items ?? []).map(mapSite),
-            error: null,
-          });
+          const params = new URLSearchParams({ page: String(page) });
+          if (siteQuery.trim()) params.set('q', siteQuery.trim());
+          const payload = await tianaFetch(`/tiana/api/sites?${params}`);
+          if (requestId !== siteRequestRef.current) return;
+          if (payload.error) throw Object.assign(new Error(payload.error.message), { payload });
+          setSitesData({ loading: false, items: (payload.items ?? []).map(mapSite), error: null,
+            page: payload.page, total: payload.total, totalPages: payload.totalPages });
         } catch (error) {
-          setSitesData({
-            loading: false,
-            items: [],
-            error: { code: 'SITES_FAILED', message: error.message },
-          });
+          if (requestId !== siteRequestRef.current) return;
+          setSitesData((current) => ({ ...current, loading: false,
+            error: error.payload?.error ?? { code: 'SITES_FAILED', message: error.message } }));
+        } finally {
+          if (requestId === siteRequestRef.current) siteBusyRef.current = false;
         }
-      }, []);
+      }, [siteQuery]);
 
       const loadLocalProjects = React.useCallback(async (silent = false) => {
         if (!silent) setLocalData((current) => ({ ...current, loading: true, error: null }));
@@ -3420,25 +3442,27 @@ window.__ModuleLoader__.load({
       }, []);
 
       const loadSpaces = React.useCallback(async () => {
+        const requestId = ++spacesRequestRef.current;
         setSpacesData((current) => ({ ...current, loading: true, error: null }));
         try {
           const payload = await tianaFetch('/tiana/api/spaces');
+          if (requestId !== spacesRequestRef.current) return;
           if (payload.error) {
             throw Object.assign(new Error(payload.error.message || 'Could not load Tiana spaces.'), { payload });
           }
-          setSpacesData({
+          setSpacesData((current) => ({
             loading: false,
             items: Array.isArray(payload.items) ? payload.items : [],
             currentTenantId: typeof payload.currentTenantId === 'string' ? payload.currentTenantId : null,
-            canCreateSpace: payload.canCreateSpace === true,
-            switching: null,
+            switching: current.switching,
             error: null,
-          });
+          }));
         } catch (error) {
+          if (requestId !== spacesRequestRef.current) return;
           setSpacesData((current) => ({
             ...current,
             loading: false,
-            switching: null,
+            switching: current.switching,
             error: error.payload?.error ?? {
               code: 'SPACES_FAILED',
               message: error instanceof Error ? error.message : String(error),
@@ -3448,7 +3472,12 @@ window.__ModuleLoader__.load({
       }, []);
 
       const switchSpace = React.useCallback(async (tenantId) => {
-        if (typeof tenantId !== 'string' || tenantId.length === 0 || tenantId === spacesData.currentTenantId) return;
+        if (switchingSpaceRef.current || typeof tenantId !== 'string' || tenantId.length === 0 || tenantId === spacesData.currentTenantId) return;
+        switchingSpaceRef.current = true;
+        spacesRequestRef.current += 1;
+        siteRequestRef.current += 1;
+        siteBusyRef.current = false;
+        setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
         setSpacesData((current) => ({ ...current, switching: tenantId, error: null }));
         try {
           const payload = await tianaFetch(
@@ -3458,8 +3487,8 @@ window.__ModuleLoader__.load({
           if (payload.ok !== true || payload.error) {
             throw Object.assign(new Error(payload.error?.message || 'Could not switch Tiana space.'), { payload });
           }
+          setSpacesData((current) => ({ ...current, currentTenantId: payload.tenantId }));
           await loadSpaces();
-          await loadSites();
         } catch (error) {
           setSpacesData((current) => ({
             ...current,
@@ -3469,15 +3498,22 @@ window.__ModuleLoader__.load({
               message: error instanceof Error ? error.message : String(error),
             },
           }));
-          await checkStatus();
+          switchingSpaceRef.current = false;
+          if (error.payload?.requiresLogin) {
+            setNotice(error.message);
+            setAuth({ phase: 'anonymous', error: null });
+            setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
+          }
         } finally {
+          switchingSpaceRef.current = false;
           setSpacesData((current) => ({ ...current, switching: null }));
         }
-      }, [checkStatus, loadSites, loadSpaces, spacesData.currentTenantId]);
+      }, [loadSpaces, spacesData.currentTenantId]);
 
       React.useEffect(() => {
         if (!authenticated) {
-          setSpacesData({ loading: false, items: [], currentTenantId: null, canCreateSpace: false, switching: null, error: null });
+          spacesRequestRef.current += 1;
+          setSpacesData({ loading: false, items: [], currentTenantId: null, switching: null, error: null });
           return undefined;
         }
         void loadSpaces();
@@ -3529,12 +3565,16 @@ window.__ModuleLoader__.load({
           ...current,
           items: current.items.filter((item) => item.id !== site.id),
         }));
+        siteBusyRef.current = false;
+        void loadSites(sitesData.items.length === 1 ? Math.max(1, sitesData.page - 1) : sitesData.page);
         setNotice('sites.noticeDeleted');
-      }, []);
+      }, [loadSites, sitesData.items.length, sitesData.page]);
 
-      const loadTemplatePage = React.useCallback(async ({ query, category, after, reset }) => {
+      const loadTemplatePage = React.useCallback(async ({ query, category, after, reset, page = 1 }) => {
+        templateRetryRef.current = { query, category, after, reset, page };
         const requestId = ++templateRequestRef.current;
         if (reset) {
+          templateCursorsRef.current = [''];
           templateLoadingMoreRef.current = false;
           setTemplatesData((current) => ({
             ...current,
@@ -3567,6 +3607,8 @@ window.__ModuleLoader__.load({
             throw Object.assign(new Error(payload.error.message || 'Template catalog failed.'), { payload });
           }
 
+          if (payload.nextCursor && payload.nextCursor === after) throw new Error('Template cursor did not advance.');
+          templateCursorsRef.current[page - 1] = after;
           const responseCategories = Array.isArray(payload.categories) ? payload.categories : [];
           if (reset && after === '' && query === '' && category === 'all' && !payload.error) {
             writeTemplateCatalogCache({
@@ -3579,12 +3621,13 @@ window.__ModuleLoader__.load({
           setTemplatesData((current) => {
             const categories = responseCategories.length > 0 ? responseCategories : current.categories;
             const categoryNames = new Map(categories.map((item) => [String(item.id), item.name]));
-            const offset = reset ? 0 : current.items.length;
+            const offset = (page - 1) * 18;
             const mapped = (payload.items ?? []).map((item, index) => mapTemplate(item, offset + index, categoryNames));
             return {
               loading: false,
               loadingMore: false,
-              items: reset ? mapped : [...current.items, ...mapped],
+              page,
+              items: mapped,
               categories,
               nextCursor: payload.nextCursor ?? null,
               origin: typeof payload.origin === 'string' ? payload.origin : current.origin,
@@ -3634,6 +3677,7 @@ window.__ModuleLoader__.load({
       }, [checkStatus]);
 
       React.useEffect(() => {
+        if (section !== 'templates') return undefined;
         if (
           templateCacheSkipRef.current
           && templateQuery.trim() === ''
@@ -3662,16 +3706,24 @@ window.__ModuleLoader__.load({
             reset: true,
           });
         }, 250);
-        return () => clearTimeout(timer);
-      }, [templateQuery, templateCategory, loadTemplatePage]);
+        return () => {
+          clearTimeout(timer);
+          templateRequestRef.current += 1;
+        };
+      }, [section, templateQuery, templateCategory, loadTemplatePage]);
 
       React.useEffect(() => {
-        if (!authenticated) {
-          setSitesData({ loading: false, items: [], error: null });
-          return;
-        }
-        void loadSites();
-      }, [authenticated, loadSites]);
+        siteRequestRef.current += 1;
+        siteBusyRef.current = false;
+        setSitesData({ loading: authenticated, items: [], error: null, page: 1, total: 0, totalPages: 0 });
+        if (section !== 'sites' || !authenticated || spacesData.switching !== null) return undefined;
+        const timer = setTimeout(() => { void loadSites(); }, 250);
+        return () => {
+          clearTimeout(timer);
+          siteRequestRef.current += 1;
+          siteBusyRef.current = false;
+        };
+      }, [section, authenticated, loadSites, spacesData.currentTenantId, spacesData.switching]);
 
       React.useEffect(() => {
       }, [authenticated]);
@@ -3695,11 +3747,13 @@ window.__ModuleLoader__.load({
           query: templateQuery.trim(),
           category: templateCategory,
           after: templatesData.nextCursor,
+          page: (templatesData.page ?? 1) + 1,
           reset: false,
         });
       }, [
         templatesData.loading,
         templatesData.nextCursor,
+        templatesData.page,
         templateQuery,
         templateCategory,
         loadTemplatePage,
@@ -3874,11 +3928,13 @@ window.__ModuleLoader__.load({
       }, [templatesData.origin]);
 
       const logout = React.useCallback(async () => {
+        siteRequestRef.current += 1;
+        siteBusyRef.current = false;
         try {
           await tianaFetch('/tiana/api/logout', { method: 'POST' });
           setAuth({ phase: 'anonymous', error: null });
           setLogin(null);
-          setSitesData({ loading: false, items: [], error: null });
+          setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
         } catch (error) {
           setNotice(error.message);
         }
@@ -3886,13 +3942,8 @@ window.__ModuleLoader__.load({
 
       const sites = React.useMemo(() => {
         if (!authenticated) return [];
-        const query = siteQuery.trim().toLowerCase();
-        const source = siteTab === 'shared' ? [] : sitesData.items;
-        return source.filter((site) => {
-          if (query === '') return true;
-          return `${site.title} ${site.description}`.toLowerCase().includes(query);
-        });
-      }, [authenticated, sitesData.items, siteTab, siteQuery]);
+        return siteTab === 'shared' ? [] : sitesData.items;
+      }, [authenticated, sitesData.items, siteTab]);
 
       const switchSection = (next) => {
         setSection(next);
@@ -3943,7 +3994,6 @@ window.__ModuleLoader__.load({
               switchingSpace: spacesData.switching,
               spaceError: spacesData.error,
               onSwitchSpace: switchSpace,
-              canSwitchSpaces: spacesData.canCreateSpace === true,
               settingsUrl,
             }),
             h('div', { className: 'tiana-nav-footer' }, t('nav.footer')),
@@ -3990,10 +4040,13 @@ window.__ModuleLoader__.load({
                   onRetryStatus: checkStatus,
                   sitesLoading: sitesData.loading,
                   sitesError: sitesData.error,
-                  onRetrySites: loadSites,
+                  onRetrySites: () => loadSites(siteRetryRef.current),
                   sharedUnavailable: true,
                   onDeleteSite: deleteSite,
-                  onRefreshSites: loadSites,
+                  onRefreshSites: () => loadSites(),
+                  page: sitesData.page, total: sitesData.total, totalPages: sitesData.totalPages,
+                  onPrevious: () => loadSites(sitesData.page - 1),
+                  onNext: () => loadSites(sitesData.page + 1),
                   onCreate: () => switchSection('templates'),
                 })
               : h(TemplatesView, {
@@ -4008,14 +4061,24 @@ window.__ModuleLoader__.load({
                   notice,
                   onCloseNotice: () => setNotice(null),
                   auth,
+                  authControls: { login, onStartLogin: startLogin, onOpenLogin: openLogin, onCopyLogin: copyLogin, onRetryStatus: checkStatus },
                   templatesLoading: templatesData.loading,
                   templatesLoadingMore: templatesData.loadingMore,
                   templatesError: templatesData.error,
                   templatesMoreError: templatesData.moreError,
                   onRetryTemplates: retryTemplates,
                   onLoadMore: loadMoreTemplates,
-                  onRetryMore: loadMoreTemplates,
+                  onRetryMore: () => {
+                    if (!templateLoadingMoreRef.current && templateRetryRef.current) void loadTemplatePage(templateRetryRef.current);
+                  },
                   hasMore: templatesData.nextCursor !== null,
+                  page: templatesData.page ?? 1,
+                  onPrevious: () => {
+                    if (templateLoadingMoreRef.current || templatesData.loading) return;
+                    void loadTemplatePage({ query: templateQuery.trim(), category: templateCategory,
+                      after: templateCursorsRef.current[(templatesData.page ?? 1) - 2] ?? '',
+                      page: (templatesData.page ?? 1) - 1, reset: false });
+                  },
                   installOrigin: templatesData.origin,
                   onOpenSession,
                 }),
@@ -4202,6 +4265,9 @@ window.__ModuleLoader__.load({
       }
       .tiana-site-date { margin-top: 3px; font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary); }
       .tiana-site-share { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+      .tiana-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; font-size: 12px; }
+      .tiana-pagination button { min-height: 32px; }
+      .tiana-pagination button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
       .tiana-list-footer { margin: 18px 0 0; font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary); }
       .tiana-footnote { opacity: 0.8; }
       .tiana-site-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-top: 18px; }
@@ -4487,19 +4553,25 @@ window.__ModuleLoader__.load({
       }
       .tiana-dialog-close:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
       .tiana-fork-dialog {
-        display: flex; flex-direction: column; width: min(800px, 100%);
+        display: flex; flex-direction: column; width: min(620px, 100%);
         height: auto; max-height: calc(100vh - 48px);
       }
       .tiana-fork-body {
-        display: flex; flex-direction: column; gap: 14px;
-        padding: 26px 28px 24px; overflow: auto;
+        display: flex; flex-direction: column; gap: 10px;
+        padding: 18px; overflow: auto;
       }
+      .tiana-fork-body > .tiana-auth-card { margin: 0; padding: 8px 0; max-width: none; gap: 6px; border: 0; border-radius: 0; }
+      .tiana-fork-body > .tiana-auth-card .tiana-auth-icon { display: none; }
+      .tiana-install-options { display: flex; align-items: flex-start; gap: 10px; }
+      .tiana-install-options > .tiana-install-option { flex: 1 1 0; min-inline-size: 0; overflow-wrap: anywhere; }
       .tiana-install-option {
-        display: flex; flex-direction: column; gap: 12px; padding: 16px;
+        display: flex; flex-direction: column; gap: 10px; padding: 12px;
         border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px;
         background: var(--dsw-alias-bg-layer-1);
       }
-      .tiana-install-option-head { display: flex; align-items: flex-start; gap: 12px; }
+      .tiana-install-option-head > div:last-child { min-inline-size: 0; }
+      .tiana-install-option-head .tiana-auth-icon { flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; }
+      .tiana-install-option-head { display: flex; align-items: flex-start; gap: 8px; }
       .tiana-install-option-head h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; }
       .tiana-install-option-head .tiana-auth-body { margin-top: 4px; max-width: none; text-align: left; }
       .tiana-install-option-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -4543,8 +4615,13 @@ window.__ModuleLoader__.load({
         }
         .tiana-dialog-preview { border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); }
         .tiana-dialog-info { max-height: 48vh; padding: 18px; }
-        .tiana-fork-dialog { width: 100%; height: calc(100vh - 24px); max-height: none; }
+        .tiana-fork-dialog { width: min(620px, 100%); height: auto; max-height: calc(100dvh - 24px); }
+        .tiana-install-option { padding: 12px; }
         .tiana-fork-body { padding: 18px; }
+      }
+      @media (max-width: 540px) {
+        .tiana-install-option-head { flex-direction: column; }
+        .tiana-fork-body { padding: 14px; }
       }
       .tiana-empty {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -4733,6 +4810,10 @@ window.__ModuleLoader__.load({
         .tiana-nav-item { width: auto; }
         .tiana-nav-footer { display: none; }
         .tiana-account { display: none; }
+        .tiana-nav:has(.has-spaces) { flex-wrap: wrap; }
+        .tiana-nav-bottom:has(.has-spaces) { flex-basis: 100%; }
+        .tiana-account.has-spaces { display: block; padding-top: 8px; }
+        .tiana-account.has-spaces .tiana-space-menu { bottom: auto; top: calc(100% + 6px); max-height: 40dvh; overflow: auto; }
         .tiana-content-scroll { padding: 22px 18px 36px; }
         .tiana-page-head { flex-direction: column; gap: 16px; }
         .tiana-head-actions { width: 100%; }

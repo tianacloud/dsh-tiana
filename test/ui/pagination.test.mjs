@@ -1,0 +1,219 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { readFile, mkdir } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { once } from 'node:events';
+import { after, before, test } from 'node:test';
+import { build } from 'esbuild';
+import { chromium } from 'playwright';
+
+let browser, server, origin;
+before(async () => {
+  const bundle = await build({ bundle: true, write: false, format: 'iife', stdin: {
+    resolveDir: resolve('.'), contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
+      window.__ModuleLoader__ = {load({factory}) {
+        let main, dictionary;
+        const t = key => dictionary.zh[key] ?? key;
+        const ctx = {effect: fn => fn(), get: () => undefined,
+          locale: {register: (ns,value) => {dictionary=value}, bind: () => t, getLocale: () => ({active:'zh'})},
+          slots: {inject: (name,fn) => fn(), register: (spec, component) => {if(spec.name==='main') main=component;}}};
+        factory(name => {if(name==='react') return React; throw new Error(name)}).apply(ctx);
+        createRoot(document.getElementById('root')).render(React.createElement(main,{t,initialSection:new URL(location.href).searchParams.get('section') ?? 'templates'}));
+      }};`,
+  }});
+  const client = await readFile(new URL('../../client.js', import.meta.url));
+  server = createServer((req, res) => {
+    if (req.url === '/bundle.js') { res.setHeader('content-type', 'text/javascript; charset=utf-8'); res.end(bundle.outputFiles[0].contents); }
+    else if (req.url === '/client.js') { res.setHeader('content-type', 'text/javascript; charset=utf-8'); res.end(client); }
+    else { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>DSH pagination candidate</title><style>
+      :root{--dsw-alias-bg-base:#fff;--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#f5f6f7;--dsw-alias-border-l1:#e2e4e8;--dsw-alias-label-primary:#17202b;--dsw-alias-label-secondary:#596575;--dsw-alias-label-tertiary:#747e8c;--dsw-alias-brand-primary:#16775f}
+      body{margin:0;font-family:Arial,sans-serif}#root{height:100vh}
+      </style></head><body><div id="root"></div><script src="/bundle.js"></script><script src="/client.js"></script></body></html>`); }
+  }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  origin = `http://127.0.0.1:${server.address().port}`;
+  browser = await chromium.launch({ headless: true, executablePath: process.env.TIANA_TEST_CHROME });
+});
+after(async () => { await browser?.close(); if (server) await new Promise(r => server.close(r)); });
+
+async function setup(t, handler) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  t.after(() => page.close());
+  const calls = [];
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  t.after(() => assert.deepEqual(errors, []));
+  await page.route('**/tiana/api/**', async route => {
+    const url = new URL(route.request().url());
+    calls.push(url.pathname + url.search);
+    let value = await handler(url, route);
+    if (value === false) return;
+    if (value === undefined) {
+      if (url.pathname.endsWith('/status')) value = { loggedIn: true, error: null };
+      else if (url.pathname.endsWith('/spaces')) value = { ok: true, items: [], currentTenantId: 'ten-test', canCreateSpace: false };
+      else if (url.pathname.endsWith('/workspaces')) value = { ok: true, items: [] };
+      else value = { ok: true, items: [], categories: [], nextCursor: null };
+    }
+    await route.fulfill({ json: value });
+  });
+  return { page, calls };
+}
+async function screenshot(page, name) {
+  if (!process.env.TIANA_UI_EVIDENCE) return;
+  await mkdir(process.env.TIANA_UI_EVIDENCE, { recursive: true });
+  await page.screenshot({ path: join(process.env.TIANA_UI_EVIDENCE, `${name}.png`), fullPage: true });
+}
+const sitePage = (page, search = '') => ({ ok: true, page, total: search ? 1 : 41, totalPages: search ? 1 : 3,
+  items: Array.from({ length: search || page === 3 ? 1 : 20 }, (_, i) => ({ id: `web-${page}-${i}`, name: search || `站点 ${page}-${i}`, description: '', enabled: true })), error: null });
+const templatePage = (page, query = '') => ({ ok: true, items: Array.from({ length: 18 }, (_, i) => ({ name: `tpl-${page}-${i}`, display_name: query || `模板 ${page}-${i}`, description: '模板分页验收', category_id: 1 })),
+  categories: [{ id: 1, name: '工具' }], nextCursor: page === 1 ? 'cursor-2' : null, origin: 'https://console.example.test', error: null });
+
+test('sites replace each page, search remotely, preserve errors and ignore late responses', async t => {
+  let failSecond = false, releaseOld;
+  const { page, calls } = await setup(t, async (url, route) => {
+    if (!url.pathname.endsWith('/sites')) return;
+    const p = Number(url.searchParams.get('page'));
+    const q = url.searchParams.get('q') ?? '';
+    if (q === 'old') { await new Promise(r => { releaseOld = r; }); }
+    if (p === 2 && failSecond) return { ok: false, error: { code: 'TEST_ERROR', message: '分页读取失败' } };
+    return sitePage(p, q);
+  });
+  await page.goto(`${origin}/?section=sites`);
+  await page.getByText('站点 1-0', { exact: true }).waitFor();
+  assert.equal(await page.locator('.tiana-site-row').count(), 20);
+  assert.equal(await page.getByRole('button', { name: '上一页', exact: true }).isDisabled(), true);
+  await screenshot(page, 'sites-first');
+  const next = page.getByRole('button', { name: '下一页', exact: true });
+  await next.focus();
+  await next.press('Enter');
+  await page.getByText('站点 2-0', { exact: true }).waitFor();
+  assert.equal(await page.getByText('站点 1-0', { exact: true }).count(), 0);
+  assert.equal(await page.locator('.tiana-site-row').count(), 20);
+  await screenshot(page, 'sites-second');
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await page.getByText('站点 1-0', { exact: true }).waitFor();
+  failSecond = true;
+  await next.click();
+  await page.getByRole('alert').filter({ hasText: '分页读取失败' }).waitFor();
+  assert.equal(await page.getByText('站点 1-0', { exact: true }).count(), 1);
+  failSecond = false;
+  await next.click();
+  await page.getByText('站点 2-0', { exact: true }).waitFor();
+  await next.click();
+  await page.getByText('站点 3-0', { exact: true }).waitFor();
+  assert.equal(await next.isDisabled(), true);
+  const search = page.getByPlaceholder('搜索名称或实例 ID');
+  await search.fill('old');
+  await page.waitForRequest(r => new URL(r.url()).searchParams.get('q') === 'old');
+  await search.fill('new');
+  await page.getByText('new', { exact: true }).waitFor();
+  releaseOld();
+  await page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === 'old');
+  assert.equal(await page.getByText('old', { exact: true }).count(), 0);
+  assert.equal(calls.some(c => c.includes('/sites?page=1&q=new')), true);
+  assert.equal(calls.filter(c => c.startsWith('/tiana/api/templates')).length, 0);
+  await screenshot(page, 'sites-search');
+});
+
+test('template pages are explicit, replace cards and retry the requested previous page', async t => {
+  let failFirst = false;
+  const { page, calls } = await setup(t, async url => {
+    if (!url.pathname.endsWith('/templates')) return;
+    const p = url.searchParams.has('after') ? 2 : 1;
+    if (p === 1 && failFirst) return { ok: false, error: { message: '模板翻页失败' } };
+    return templatePage(p, url.searchParams.get('q') ?? '');
+  });
+  await page.goto(origin);
+  await page.getByText('模板 1-0', { exact: true }).waitFor();
+  assert.equal(await page.locator('.tiana-template-card').count(), 18);
+  await page.locator('.tiana-content-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  assert.equal(calls.filter(c => c.startsWith('/tiana/api/templates')).length, 1);
+  await screenshot(page, 'templates-first');
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByText('模板 2-0', { exact: true }).waitFor();
+  assert.equal(await page.locator('.tiana-template-card').count(), 18);
+  assert.equal(await page.getByText('模板 1-0', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isDisabled(), true);
+  await screenshot(page, 'templates-second');
+  failFirst = true;
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await page.getByText('加载该页模板失败。', { exact: true }).waitFor();
+  failFirst = false;
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByText('模板 1-0', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '工具', exact: true }).click();
+  await page.waitForRequest(r => new URL(r.url()).searchParams.get('category') === '1');
+  await page.getByPlaceholder('搜索模板').fill('匹配模板');
+  await page.waitForRequest(r => new URL(r.url()).searchParams.get('q') === '匹配模板');
+  assert.equal(calls.filter(c => c.startsWith('/tiana/api/sites')).length, 0);
+});
+
+test('sites deduplicate clicks and discard pages from a previous space or logged-out account', async t => {
+  let tenant = 'ten-a', releasePage;
+  const { page, calls } = await setup(t, async url => {
+    if (url.pathname.endsWith('/spaces')) return { ok: true, currentTenantId: tenant, canCreateSpace: true,
+      items: ['a', 'b'].map(id => ({ tenantId: `ten-${id}`, displayName: `空间 ${id}`, role: 'admin' })) };
+    if (url.pathname.endsWith('/spaces/switch')) { tenant = url.searchParams.get('id'); return { ok: true }; }
+    if (url.pathname.endsWith('/logout')) return { ok: true };
+    if (!url.pathname.endsWith('/sites')) return;
+    const p = Number(url.searchParams.get('page'));
+    const owner = tenant;
+    if (p === 2) await new Promise(r => { releasePage = r; });
+    const result = sitePage(p);
+    result.items = result.items.map((item, i) => ({ ...item, name: `${owner} ${p}-${i}` }));
+    return result;
+  });
+  await page.goto(`${origin}/?section=sites`);
+  await page.getByText('ten-a 1-0', { exact: true }).waitFor();
+  const next = page.getByRole('button', { name: '下一页', exact: true });
+  const before = calls.filter(c => c === '/tiana/api/sites?page=2').length;
+  const page2Request = page.waitForRequest(r => r.url().endsWith('/sites?page=2'));
+  await next.evaluate(button => { button.click(); button.click(); });
+  await page2Request;
+  assert.equal(await next.isDisabled(), true);
+  assert.equal(calls.filter(c => c === '/tiana/api/sites?page=2').length, before + 1);
+  await page.getByRole('button', { name: '切换空间', exact: true }).click();
+  await page.getByRole('option', { name: '空间 b', exact: true }).click();
+  await page.getByRole('button', { name: '切换', exact: true }).click();
+  await page.getByText('ten-b 1-0', { exact: true }).waitFor();
+  const oldResponse = page.waitForResponse(r => r.url().endsWith('/sites?page=2'));
+  releasePage();
+  await oldResponse;
+  assert.equal(await page.getByText('ten-a 2-0', { exact: true }).count(), 0);
+  const logoutRequest = page.waitForRequest(r => r.url().endsWith('/sites?page=2'));
+  await next.click();
+  await logoutRequest;
+  await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  const loggedOutResponse = page.waitForResponse(r => r.url().endsWith('/sites?page=2'));
+  releasePage();
+  await loggedOutResponse;
+  await page.getByRole('button', { name: '登录 Tiana', exact: true }).first().waitFor();
+  assert.equal(await page.locator('.tiana-site-row').count(), 0);
+  await screenshot(page, 'sites-logged-out');
+});
+
+test('template search discards delayed pages, refresh returns to page one and clicks do not prefetch', async t => {
+  let releaseOld;
+  const { page, calls } = await setup(t, async url => {
+    if (!url.pathname.endsWith('/templates')) return;
+    const query = url.searchParams.get('q') ?? '';
+    if (query === 'old') await new Promise(r => { releaseOld = r; });
+    return templatePage(url.searchParams.has('after') ? 2 : 1, query);
+  });
+  await page.goto(origin);
+  await page.getByText('模板 1-0', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '下一页', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await page.getByText('模板 2-0', { exact: true }).waitFor();
+  assert.equal(calls.filter(c => c.includes('after=cursor-2')).length, 1);
+  await page.getByRole('button', { name: '刷新模板', exact: true }).click();
+  await page.getByText('模板 1-0', { exact: true }).waitFor();
+  await page.getByPlaceholder('搜索模板').fill('old');
+  await page.waitForRequest(r => new URL(r.url()).searchParams.get('q') === 'old');
+  await page.getByPlaceholder('搜索模板').fill('new');
+  await page.getByText('new', { exact: true }).first().waitFor();
+  const response = page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === 'old');
+  releaseOld();
+  await response;
+  assert.equal(await page.getByText('old', { exact: true }).count(), 0);
+  assert.equal(calls.filter(c => c.includes('q=new')).some(c => c.includes('after=')), false);
+});

@@ -6,10 +6,16 @@ Tiana plugin bundle for DeepSeek Harness (DSH).
 
 ## Features
 
-- **Automatic toolchain bootstrap**: On first activation, installs `@tianacloud/cli` (if missing or older than `1.0.17`) and installs the official Tiana agent skills (`tiana`, `tiana-function`, `tiana-git`, `tiana-sqlite`, `tiana-web`) via `@tianacloud/agent-skills` into `$DSH_HOME/skills` without writing to shared `~/.agents/skills`.
-- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<name>` with an isolated local SQLite preview and a DSH workspace session.
+- **Automatic toolchain bootstrap**: On activation, installs or updates `@tianacloud/cli@latest` (requires at least `1.0.30`) and installs the official Tiana agent skills (`tiana`, `tiana-function`, `tiana-git`, `tiana-sqlite`, `tiana-web`) via `@tianacloud/agent-skills@latest` into `$DSH_HOME/skills` without writing to shared `~/.agents/skills`.
+- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<template-id>` with an isolated local SQLite preview and a DSH workspace session.
 - **Sandbox build toggle**: Includes a unified "Sandbox build" toggle switch for local template builds, enabled by default when supported by the host machine and disabled (unchecked) when the host does not support sandboxing.
 - **Sites & local projects**: Sign in via Tiana CLI browser authorization, list and manage deployed Tiana web sites (open, manage in Tiana Console, or delete site while keeping associated SQLite/Git resources), and launch or reopen local template previews.
+
+## List pagination
+
+Sites read 20 items per page; the marketplace reads 18. Previous/next controls replace the visible page without fetching the entire collection. Search, category changes and refresh return to page one. Site search filters names or instance IDs on the server before pagination.
+
+This candidate requires CLI support for `web list --page`. The matching CLI 1.0.30 is pending publication and must ship before the plugin. Unsupported CLIs receive an upgrade message; there is no full-list fallback.
 
 ## Prerequisites
 
@@ -35,7 +41,7 @@ Replace `<profile>` with your DSH profile name (for example `web`):
 dsh plugin --profile <profile> add @tianacloud/dsh-tiana
 ```
 
-After installation, the Host plugin runs an idempotent bootstrap and writes diagnostics to `$DSH_HOME/tiana-plugin/install-state.json`. You can also run the bootstrap manually from the installed package directory:
+After installation, the Host plugin runs the latest-toolchain bootstrap and writes diagnostics to `$DSH_HOME/tiana-plugin/install-state.json`. You can also run the bootstrap manually from the installed package directory:
 
 ```sh
 node scripts/bootstrap.mjs
@@ -52,7 +58,7 @@ node scripts/bootstrap.mjs
 ## Side Effects & Uninstall
 
 - Installing and activating this plugin installs `@tianacloud/cli` globally (preferring user-writable `pnpm` global bin, falling back to `npm`) and writes the five official Tiana skills into `$DSH_HOME/skills`.
-- Existing skills in `$DSH_HOME/skills`, `~/.agents/skills`, or project-level `.dsh/skills` / `.agents/skills` are never overwritten or deleted by the plugin.
+- Official skills already in `$DSH_HOME/skills` are refreshed to latest. Shared `~/.agents/skills` and project-level `.dsh/skills` / `.agents/skills` are not written by the plugin.
 - **Uninstalling `@tianacloud/dsh-tiana` does NOT automatically remove** the globally installed `tiana` CLI, `$DSH_HOME/skills`, cloned directories under `~/TianaTemplates/`, or `$DSH_HOME/tiana-plugin/` state. DSH has no uninstall hook or options UI for plugins, so remove those manually if no longer needed.
 
 ## Security & Privacy Notes

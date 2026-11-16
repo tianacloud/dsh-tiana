@@ -4,7 +4,7 @@
  * The browser never runs the Tiana CLI and never sees credentials. It calls
  * same-origin `/tiana/api/*` routes; account/site operations run the installed
  * `tiana` CLI, public marketplace reads fetch the anonymous MGR catalog, and
- * read-only Web APIs (space creation quota and app icons) use only the CLI
+ * read-only Web APIs (app icons) use only the CLI
  * access token in Host memory. The refresh token is never used, returned or
  * persisted by this module.
  *
@@ -94,74 +94,6 @@ async function cliAccessToken() {
   const expiresAt = Date.parse(entry?.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60_000) return null;
   return { accessToken: token, expiresAt };
-}
-
-export async function creationQuota() {
-  const credential = await cliAccessToken();
-  if (credential === null) {
-    return {
-      ok: false,
-      canCreate: false,
-      limit: null,
-      used: null,
-      remaining: null,
-      error: { code: 'ACCESS_TOKEN_UNAVAILABLE', message: 'Tiana access token is unavailable or expired.' },
-    };
-  }
-  try {
-    const response = await fetch(`${marketplaceOrigin()}/api/v1/me/tenant-creation`, {
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${credential.accessToken}`,
-      },
-      signal: AbortSignal.timeout(WEB_ACCOUNT_TIMEOUT_MS),
-      redirect: 'manual',
-    });
-    if (!response.ok) {
-      return {
-        ok: false,
-        canCreate: false,
-        limit: null,
-        used: null,
-        remaining: null,
-        error: { code: 'SPACE_QUOTA_UNAVAILABLE', message: `Tiana space creation quota returned HTTP ${response.status}.` },
-      };
-    }
-    const value = await response.json();
-    const limit = Number(value?.limit);
-    const used = Number(value?.used);
-    const remaining = Number(value?.remaining);
-    if (![limit, used, remaining].every((item) => Number.isFinite(item) && item >= 0)) {
-      return {
-        ok: false,
-        canCreate: false,
-        limit: null,
-        used: null,
-        remaining: null,
-        error: { code: 'SPACE_QUOTA_INVALID', message: 'Tiana space creation quota response was invalid.' },
-      };
-    }
-    return {
-      ok: true,
-      canCreate: limit > 0,
-      limit,
-      used,
-      remaining,
-      error: null,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      canCreate: false,
-      limit: null,
-      used: null,
-      remaining: null,
-      error: {
-        code: 'SPACE_QUOTA_UNAVAILABLE',
-        message: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
 }
 
 async function fetchSiteIcon(id) {
@@ -255,7 +187,6 @@ const MARKETPLACE_TIMEOUT_MS = 20_000;
 const TEMPLATE_CACHE_TTL_MS = 24 * 60 * 60_000;
 const TEMPLATE_CACHE_MAX = 256;
 const TEMPLATE_PAGE_CACHE = new Map();
-const WEB_ACCOUNT_TIMEOUT_MS = 15_000;
 const SITE_ICON_TIMEOUT_MS = 15_000;
 const MAX_SITE_ICON_BYTES = 6 * 1024 * 1024;
 const SITE_ICON_CACHE_TTL_MS = 5 * 60_000;
@@ -365,8 +296,8 @@ async function fetchPublicJson(url, { signal } = {}) {
  */
 async function fetchTemplateCover(name, version, { signal } = {}) {
   const origin = marketplaceOrigin();
-  const suffix = version === '' ? '' : `?v=${encodeURIComponent(version)}`;
-  const url = `${origin}/api/v1/template-marketplace/${encodeURIComponent(name)}/cover${suffix}`;
+  const suffix = version === '' ? '' : `&version=${encodeURIComponent(version)}`;
+  const url = `${origin}/api/v1/template-catalog/${encodeURIComponent(name)}/cover?channel=market${suffix}`;
   const timeout = AbortSignal.timeout(COVER_TIMEOUT_MS);
   const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
   const response = await fetch(url, {
@@ -401,6 +332,7 @@ async function runTiana(args, { timeoutMs = LIST_TIMEOUT_MS, signal } = {}) {
       env: commandEnvironment(),
       timeoutMs,
       signal,
+      stdoutLimit: MAX_JSON_CHARS,
     });
     const payload = parseJson(result.stdout) ?? parseJson(result.stderr);
     return {
@@ -426,7 +358,7 @@ async function runTiana(args, { timeoutMs = LIST_TIMEOUT_MS, signal } = {}) {
       status: 'failed',
       exitCode: 1,
       error: {
-        code: 'CLI_FAILED',
+        code: error?.code === 'CLI_OUTPUT_TOO_LARGE' ? error.code : 'CLI_FAILED',
         message: error instanceof Error ? error.message : String(error),
         next_action: 'Check the Tiana CLI installation and retry.',
       },
@@ -492,7 +424,7 @@ export async function listSpaces({ signal } = {}) {
     signal,
   });
   const error = normalizeError(result.error);
-  if (result.exitCode !== 0 || result.status === 'failed' || result.data === undefined) {
+  if (result.exitCode !== 0 || result.status !== 'succeeded' || error || !Array.isArray(result.data?.items)) {
     return { ok: false, currentTenantId: null, items: [], error: error ?? { code: 'SPACES_FAILED', message: 'Could not list Tiana spaces.' } };
   }
   const data = result.data;
@@ -529,7 +461,7 @@ export async function switchSpace(id, { signal } = {}) {
   });
   const error = normalizeError(result.error);
   const tenantId = typeof result.data?.tenant_id === 'string' ? result.data.tenant_id : id;
-  if (result.exitCode !== 0 || result.status === 'failed' || result.status === 'unknown' || result.data?.tenant_id === undefined) {
+  if (result.exitCode !== 0 || result.status !== 'succeeded' || error || result.data?.tenant_id !== id) {
     return {
       ok: false,
       tenantId,
@@ -537,7 +469,7 @@ export async function switchSpace(id, { signal } = {}) {
       error: error ?? { code: 'SPACE_SWITCH_FAILED', message: 'Tiana space switch did not succeed.' },
     };
   }
-  return { ok: true, tenantId, requiresLogin: false, error: null };
+  return { ok: true, tenantId, syncStatus: result.data.sync_status ?? null, requiresLogin: false, error: null };
 }
 
 /**
@@ -561,13 +493,17 @@ export async function logout({ signal } = {}) {
  * @param {object} [options] - execution options.
  * @returns {Promise<object>} `{ items, error }`.
  */
-export async function listSites({ signal } = {}) {
-  const result = await runTiana(['web', 'list', '--json'], {
+export async function listSites({ page = 1, q = '', signal } = {}) {
+  const empty = { items: [], page, total: 0, totalPages: 0 };
+  if (!Number.isInteger(page) || page < 1 || page > 10000 || typeof q !== 'string' || [...q].length > 200) {
+    return { ...empty, error: { code: 'INVALID_SITE_QUERY', message: 'Invalid site page or search.' } };
+  }
+  const result = await runTiana(['web', 'list', '--page', String(page), '--search', q.trim(), '--json'], {
     timeoutMs: LIST_TIMEOUT_MS,
     signal,
   });
   const items = result.data?.items;
-  if (Array.isArray(items)) {
+  if (result.exitCode === 0 && result.status === 'succeeded' && Array.isArray(items) && result.data?.page === page) {
     let consoleOrigin = null;
     try {
       consoleOrigin = marketplaceOrigin();
@@ -575,6 +511,9 @@ export async function listSites({ signal } = {}) {
       // Sites remain usable even if a bad origin only affects console links.
     }
     return {
+      page,
+      total: result.data.total ?? 0,
+      totalPages: result.data.total_pages ?? 0,
       items: items.map((item) => ({
         ...item,
         console_url: consoleOrigin !== null && typeof item.id === 'string'
@@ -584,12 +523,15 @@ export async function listSites({ signal } = {}) {
       error: null,
     };
   }
+  const upgradeRequired = (result.exitCode === 2 && result.error?.code === 'INVALID_INPUT')
+    || /flag provided but not defined[^\n]*page/i.test(result.stderr ?? '')
+    || (result.exitCode === 0 && result.status === 'succeeded' && Array.isArray(items) && result.data?.page === undefined);
   return {
-    items: [],
-    error: normalizeError(result.error) ?? {
-      code: 'WEB_LIST_FAILED',
-      message: 'Tiana web list did not return an item list.',
-      nextAction: 'Check the Tiana account and retry.',
+    ...empty,
+    error: (upgradeRequired ? null : normalizeError(result.error)) ?? {
+      code: upgradeRequired ? 'CLI_UPGRADE_REQUIRED' : 'WEB_LIST_FAILED',
+      message: upgradeRequired ? 'Update the Tiana CLI to a version supporting web list --page.' : 'Tiana web list did not return a valid page.',
+      nextAction: 'Update the Tiana CLI and retry.',
     },
   };
 }
@@ -622,6 +564,29 @@ export async function deleteSite(id, { signal } = {}) {
       message: 'Tiana web delete did not succeed.',
       nextAction: 'Refresh the site list and inspect the Web instance in Tiana Console.',
     }),
+  };
+}
+
+function templateView(item) {
+  if (typeof item?.template_id !== 'string' || !item.current_version || typeof item.display_name !== 'string') {
+    throw new Error('Tiana template response was incomplete.');
+  }
+  return {
+    name: item.template_id,
+    display_name: item.display_name,
+    description: item.description,
+    category_id: item.category_id,
+    tags: item.tags,
+    space_name: item.space_name,
+    is_official: item.is_official,
+    version: item.current_version.version,
+    enabled: item.current_version.installable,
+    has_source: item.current_version.has_source && item.permissions?.can_download_source === true,
+    cover_url: item.cover_url,
+    counters: {
+      install_count: (BigInt(item.counters.share_install_count) + BigInt(item.counters.market_install_count)).toString(),
+      copy_count: item.counters.market_copy_count,
+    },
   };
 }
 
@@ -670,8 +635,8 @@ export async function listPublicTemplates({
     TEMPLATE_PAGE_CACHE.delete(cacheKey);
   }
 
-  const base = `${origin}/api/v1/template-marketplace`;
-  const params = new URLSearchParams();
+  const base = `${origin}/api/v1/template-catalog`;
+  const params = new URLSearchParams({ channel: 'market', limit: '18' });
   if (after !== '') params.set('after', after);
   if (category !== '') params.set('category_id', category);
   if (q !== '') params.set('q', q);
@@ -681,7 +646,7 @@ export async function listPublicTemplates({
     const [pageResult, categoriesResult] = await Promise.allSettled([
       fetchPublicJson(pageUrl, { signal }),
       includeCategories
-        ? fetchPublicJson(`${base}/categories`, { signal })
+        ? fetchPublicJson(`${origin}/api/v1/template-marketplace/categories`, { signal })
         : Promise.resolve({ items: [] }),
     ]);
     if (pageResult.status !== 'fulfilled') throw pageResult.reason;
@@ -700,7 +665,7 @@ export async function listPublicTemplates({
       : null;
 
     const value = {
-      items: page.items,
+      items: page.items.map(templateView),
       categories,
       nextCursor,
       origin,
@@ -739,10 +704,19 @@ export async function listPublicTemplates({
 export async function getPublicTemplateDetail(name, { signal } = {}) {
   try {
     const origin = marketplaceOrigin();
-    const item = await fetchPublicJson(
-      `${origin}/api/v1/template-marketplace/${encodeURIComponent(name)}`,
+    const detail = await fetchPublicJson(
+      `${origin}/api/v1/template-catalog/${encodeURIComponent(name)}?channel=market`,
       { signal },
     );
+    if (detail.template_id !== name) throw new Error('Template identity did not match.');
+    const item = templateView(detail);
+    if (item.has_source) {
+      const source = await fetchPublicJson(`${origin}/api/v1/template-catalog/${encodeURIComponent(name)}/source?channel=market&version=${encodeURIComponent(item.version)}`, { signal });
+      if (source.template_id !== name || source.version !== item.version || typeof source.prompt !== 'string') {
+        throw new Error('Template source identity or version did not match.');
+      }
+      item.prompt = `请使用 tiana-web 技能，基于模板 ${origin}/templates/${encodeURIComponent(name)}?channel=market 制作新应用。\n\n${source.prompt}`;
+    }
     return { item, error: null };
   } catch (error) {
     return {
@@ -2038,8 +2012,8 @@ function allowSubresourceRequest(req, res, label) {
  */
 async function fetchPublicTemplatePreview(name, version, { signal } = {}) {
   const origin = marketplaceOrigin();
-  const suffix = version === '' ? '' : `?v=${encodeURIComponent(version)}`;
-  const url = `${origin}/api/v1/template-marketplace/${encodeURIComponent(name)}/preview${suffix}`;
+  const suffix = version === '' ? '' : `&version=${encodeURIComponent(version)}`;
+  const url = `${origin}/api/v1/template-catalog/${encodeURIComponent(name)}/preview?channel=market${suffix}`;
   const timeout = AbortSignal.timeout(COVER_TIMEOUT_MS);
   const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
   const response = await fetch(url, {
@@ -2166,18 +2140,7 @@ export function registerTianaRoutes(webServer, options = {}) {
     return { ok: true, ...result };
   });
 
-  add('GET', '/tiana/api/spaces', async ({ signal }) => {
-    const result = await listSpaces({ signal });
-    const quota = await creationQuota();
-    return {
-      ok: result.ok,
-      items: result.items,
-      currentTenantId: result.currentTenantId,
-      canCreateSpace: quota.ok === true && quota.canCreate === true,
-      creation: quota.ok ? { limit: quota.limit, used: quota.used, remaining: quota.remaining } : null,
-      error: result.error,
-    };
-  });
+  add('GET', '/tiana/api/spaces', ({ signal }) => listSpaces({ signal }));
 
   add('POST', '/tiana/api/spaces/switch', async ({ req, signal }) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -2190,9 +2153,11 @@ export function registerTianaRoutes(webServer, options = {}) {
     return { ok: result.ok, error: result.error };
   });
 
-  add('GET', '/tiana/api/sites', async ({ signal }) => {
-    const result = await listSites({ signal });
-    return { ok: true, items: result.items, error: result.error };
+  add('GET', '/tiana/api/sites', async ({ req, signal }) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const rawPage = url.searchParams.get('page') ?? '1';
+    const result = await listSites({ page: /^[1-9]\d{0,4}$/.test(rawPage) ? Number(rawPage) : NaN, q: url.searchParams.get('q') ?? '', signal });
+    return { ok: result.error === null, ...result };
   });
 
   add('GET', '/tiana/api/templates', async ({ req, signal }) => {

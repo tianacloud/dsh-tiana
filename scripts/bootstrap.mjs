@@ -2,7 +2,7 @@
 /**
  * Run the Tiana plugin bootstrap manually.
  *
- * This is the same code path the Host plugin uses on first activation. It is
+ * This is the same code path the Host plugin uses on activation. It is
  * useful after a failed install, or for verifying the bootstrap without
  * restarting DSH.
  */

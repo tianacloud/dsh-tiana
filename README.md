@@ -6,10 +6,16 @@ DeepSeek Harness（DSH）的 Tiana 插件包。
 
 ## 功能概览
 
-- **工具链自动引导**：首次激活时自动检测并安装/升级 `@tianacloud/cli`（最低要求 `1.0.17`），并通过官方 `@tianacloud/agent-skills` 将五个 Tiana Skill（`tiana`、`tiana-function`、`tiana-git`、`tiana-sqlite`、`tiana-web`）安装到 **DSH 专用目录** `$DSH_HOME/skills`，不会写入 `~/.agents/skills`。
-- **模板市场**：无需登录即可按分类或关键词浏览公开 Tiana 网页应用模板、查看沙箱预览、复制提示词，或将模板源码克隆到 `~/TianaTemplates/<模板名>` 并自动创建 DSH 工作区与本地 SQLite mock 预览。
+- **工具链自动引导**：激活时安装／更新 npm latest 的 `@tianacloud/cli`（最低要求 `1.0.30`），并通过官方 `@tianacloud/agent-skills@latest` 将五个 Tiana Skill（`tiana`、`tiana-function`、`tiana-git`、`tiana-sqlite`、`tiana-web`）安装到 **DSH 专用目录** `$DSH_HOME/skills`，不会写入 `~/.agents/skills`。
+- **模板市场**：无需登录即可按分类或关键词浏览公开 Tiana 网页应用模板、查看沙箱预览、复制提示词，或将模板源码克隆到 `~/TianaTemplates/<模板 ID>` 并自动创建 DSH 工作区与本地 SQLite mock 预览。
 - **沙箱构建开关**：本地克隆与构建面板内置「沙箱构建」开关，默认在支持沙箱的主机上开启；若当前主机不支持沙箱，该开关将保持未开启且不可勾选。
 - **站点与本地项目管理**：通过 Tiana CLI 浏览器授权登录，查看与管理个人站点（直接访问、跳转控制台管理、删除站点并保留关联 SQLite/Git 资源），以及查看并重启本地克隆项目的预览服务。
+
+## 列表分页
+
+“我的站点”每页读取 20 条，模板市场每页读取 18 条。通过“上一页／下一页”切换，翻页替换当前列表，不自动拉取全部数据。搜索、分类或刷新回到第一页；站点搜索按名称或实例 ID 在服务端完成。
+
+此候选版本依赖包含 `web list --page` 的 CLI；配套 CLI 1.0.30 尚待发布，须先发布 CLI 再发布插件。旧 CLI 不支持分页时显示升级提示，不退回全量读取。
 
 ## 前置条件
 
@@ -35,7 +41,7 @@ DeepSeek Harness（DSH）的 Tiana 插件包。
 dsh plugin --profile <profile> add @tianacloud/dsh-tiana
 ```
 
-安装并激活后，Host 插件会自动执行幂等 bootstrap，并将诊断状态写入 `$DSH_HOME/tiana-plugin/install-state.json`。如需手动排查或重试，可在插件包目录执行：
+安装并激活后，Host 插件会自动执行工具链更新，并将诊断状态写入 `$DSH_HOME/tiana-plugin/install-state.json`。如需手动排查或重试，可在插件包目录执行：
 
 ```sh
 node scripts/bootstrap.mjs
@@ -52,7 +58,7 @@ node scripts/bootstrap.mjs
 ## 副作用与卸载说明
 
 - 插件首次激活会在用户级环境全局安装 `tiana` CLI（优先使用用户可写的 `pnpm` 全局目录，回退到 `npm`），并将五个官方 Skill 安装至 `$DSH_HOME/skills`。
-- 插件不会覆盖已存在的同名 Skill，也不会写入 `~/.agents/skills` 或项目级 `.dsh/skills`、`.agents/skills`。
+- 插件会使用最新版官方 Skill 更新 `$DSH_HOME/skills` 中的同名目录；不会写入 `~/.agents/skills` 或项目级 `.dsh/skills`、`.agents/skills`。
 - **卸载 `@tianacloud/dsh-tiana` 不会自动删除**已全局安装的 `tiana` CLI、`$DSH_HOME/skills`、`~/TianaTemplates/` 中的本地克隆项目，以及 `$DSH_HOME/tiana-plugin/` 下的状态与预览数据；DSH 目前没有插件卸载钩子，也没有卸载选项界面，如不再需要，请手动清理。
 
 ## 安全与隐私边界

@@ -2,12 +2,12 @@
  * Host half of the Tiana bundle.
  *
  * First activation bootstraps the Tiana toolchain:
- * - installs the `tiana` CLI when missing or below the supported floor;
+ * - installs the `tiana` CLI to npm latest, including existing installations;
  * - installs the official Tiana skills into `$DSH_HOME/skills`, the DSH-only
  *   `user-dsh` skill root, not the shared `~/.agents/skills`.
  *
- * The bootstrap is idempotent and never removes user files. Its last result is
- * written to `$DSH_HOME/tiana-plugin/install-state.json` for diagnostics.
+ * The bootstrap refreshes existing official skills and records its last result
+ * in `$DSH_HOME/tiana-plugin/install-state.json` for diagnostics.
  *
  * Account/site API routes and the local template preview live in
  * `tiana-api.js`.
@@ -47,7 +47,7 @@ function writeHostDiagnostics(ctx, extra = {}) {
 }
 
 /**
- * Start the idempotent Tiana toolchain bootstrap.
+ * Install or update the Tiana toolchain to latest.
  * @param {import('@deepseek-ai/cordis').Context} ctx - host plugin context.
  */
 export function apply(ctx) {

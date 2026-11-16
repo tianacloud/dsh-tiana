@@ -25,8 +25,8 @@ function makeRunner(options = {}) {
     cliInitially = true,
     installCli = true,
     installSkills = true,
-    initialVersion = '1.0.21',
-    installedVersion = '1.0.21',
+    initialVersion = '1.0.30',
+    installedVersion = '1.0.30',
   } = options;
   const calls = [];
   let cliPresent = cliInitially;
@@ -75,7 +75,7 @@ test('fresh home installs the CLI and DSH-only skills', async (t) => {
 
   assert.equal(state.status, 'ok');
   assert.equal(state.cli.installed, true);
-  assert.equal(state.cli.version, '1.0.21');
+  assert.equal(state.cli.version, '1.0.30');
   assert.equal(state.skills.installed, true);
   assert.equal(state.skillsDir, join(dir, 'skills'));
   assert.ok(calls.some((call) => (call.command.endsWith('pnpm') && call.args[0] === 'add') || (call.command.endsWith('npm') && call.args[0] === 'install')));
@@ -86,10 +86,10 @@ test('fresh home installs the CLI and DSH-only skills', async (t) => {
 
   const persisted = JSON.parse(await readFile(join(dir, 'tiana-plugin', 'install-state.json'), 'utf8'));
   assert.equal(persisted.status, 'ok');
-  assert.equal(persisted.cli.version, '1.0.21');
+  assert.equal(persisted.cli.version, '1.0.30');
 });
 
-test('an already-ready home is left alone', async (t) => {
+test('an already-ready home still updates CLI and skills to latest', async (t) => {
   const { dir, env } = await makeHome();
   t.after(() => rm(dir, { recursive: true, force: true }));
   await createSkills(dir);
@@ -98,12 +98,13 @@ test('an already-ready home is left alone', async (t) => {
   const state = await bootstrap({ env, run, log: () => {} });
 
   assert.equal(state.status, 'ok');
-  assert.equal(state.cli.skipped, true);
-  assert.equal(state.skills.skipped, true);
-  assert.deepEqual(calls.map((call) => [call.command, ...call.args]), [['tiana', 'version']]);
+  assert.equal(state.cli.upgraded, true);
+  assert.equal(state.skills.installed, true);
+  assert.ok(calls.some((call) => call.args.includes('@tianacloud/cli@latest')));
+  assert.ok(calls.some((call) => call.args.includes('@tianacloud/agent-skills@latest')));
 });
 
-test('missing skills are installed even when the CLI is ready', async (t) => {
+test('missing skills are installed and an existing CLI is refreshed', async (t) => {
   const { dir, env } = await makeHome();
   t.after(() => rm(dir, { recursive: true, force: true }));
   const { run, calls } = makeRunner();
@@ -111,7 +112,7 @@ test('missing skills are installed even when the CLI is ready', async (t) => {
   const state = await bootstrap({ env, run, log: () => {} });
 
   assert.equal(state.status, 'ok');
-  assert.equal(state.cli.skipped, true);
+  assert.equal(state.cli.upgraded, true);
   assert.equal(state.skills.installed, true);
   assert.ok(calls.some((call) => call.command.endsWith('npx')));
 });
@@ -119,13 +120,13 @@ test('missing skills are installed even when the CLI is ready', async (t) => {
 test('an old CLI is upgraded before skills are installed', async (t) => {
   const { dir, env } = await makeHome();
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const { run } = makeRunner({ initialVersion: '1.0.0', installedVersion: '1.0.21' });
+  const { run } = makeRunner({ initialVersion: '1.0.29', installedVersion: '1.0.30' });
 
   const state = await bootstrap({ env, run, log: () => {} });
 
   assert.equal(state.status, 'ok');
   assert.equal(state.cli.upgraded, true);
-  assert.equal(state.cli.version, '1.0.21');
+  assert.equal(state.cli.version, '1.0.30');
   assert.equal(state.skills.installed, true);
 });
 
@@ -160,4 +161,27 @@ test('a failed CLI install is persisted and does not claim success', async (t) =
   assert.equal(persisted.status, 'error');
   assert.match(persisted.error, /exited with 1|No package manager/);
   assert.equal(existsSync(join(dir, 'skills', 'tiana', 'SKILL.md')), false);
+});
+
+
+test('bootstrap does not accept latest if it still lacks site pagination', async (t) => {
+  const { dir, env } = await makeHome();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const { run } = makeRunner({ initialVersion: '1.0.25', installedVersion: '1.0.29' });
+  await assert.rejects(bootstrap({ env, run }), /below the required 1.0.30/);
+  const state = JSON.parse(await readFile(join(dir, 'tiana-plugin', 'install-state.json'), 'utf8'));
+  assert.equal(state.status, 'error');
+});
+
+
+test('existing skills are refreshed and a newer latest CLI is selected above the minimum', async (t) => {
+  const { dir, env } = await makeHome();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await createSkills(dir);
+  await writeFile(join(dir, 'skills', 'tiana', 'SKILL.md'), '# old version');
+  const { run } = makeRunner({ initialVersion: '1.0.30', installedVersion: '1.0.31' });
+  const state = await bootstrap({ env, run });
+  assert.equal(state.cli.version, '1.0.31');
+  assert.equal(state.skills.installed, true);
+  assert.notEqual(await readFile(join(dir, 'skills', 'tiana', 'SKILL.md'), 'utf8'), '# old version');
 });
