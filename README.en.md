@@ -7,15 +7,17 @@ Tiana plugin bundle for DeepSeek Harness (DSH).
 ## Features
 
 - **Automatic toolchain bootstrap**: On activation, installs or updates `@tianacloud/cli@latest` (requires at least `1.0.30`) and installs the official Tiana agent skills (`tiana`, `tiana-function`, `tiana-git`, `tiana-sqlite`, `tiana-web`) via `@tianacloud/agent-skills@latest` into `$DSH_HOME/skills` without writing to shared `~/.agents/skills`.
-- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<template-id>` with an isolated local SQLite preview and a DSH workspace session.
+- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<template-display-name>` with an isolated local SQLite preview and a DSH workspace session.
 - **Sandbox build toggle**: Includes a unified "Sandbox build" toggle switch for local template builds, enabled by default when supported by the host machine and disabled (unchecked) when the host does not support sandboxing.
-- **Sites & local projects**: Sign in via Tiana CLI browser authorization, list and manage deployed Tiana web sites (open, manage in Tiana Console, or delete site while keeping associated SQLite/Git resources), and launch or reopen local template previews.
+- **Sites & local projects**: Sign in via Tiana CLI browser authorization, list and manage deployed sites (open, manage in Tiana Console, or delete a site while keeping associated SQLite/Git resources), and start, stop or rebuild local previews. Vite templates use development mode and hot updates; other templates rebuild and refresh when source files change.
+- **Spaces and sign-in**: Multi-space accounts display their current space. Selecting another space switches directly, opening authorization automatically when needed. Pending sign-in can be cancelled.
+- **Project conversations**: Open the project’s most recent available conversation, or create a guided conversation in its DSH workspace when none exists. Archived conversations are excluded.
 
 ## List pagination
 
-Sites read 20 items per page; the marketplace reads 18. Previous/next controls replace the visible page without fetching the entire collection. Search, category changes and refresh return to page one. Site search filters names or instance IDs on the server before pagination.
+Sites read 20 items per page, with previous/next controls replacing the visible page. The marketplace appends the next batch of 18 items as you scroll, without fetching the entire collection in advance. Search, category changes and refresh restart the list. Site search filters names or instance IDs on the server before pagination.
 
-This candidate requires CLI support for `web list --page`. The matching CLI 1.0.30 is pending publication and must ship before the plugin. Unsupported CLIs receive an upgrade message; there is no full-list fallback.
+Activation updates the official CLI automatically. Unsupported CLIs receive an upgrade message; there is no full-list fallback.
 
 ## Prerequisites
 
@@ -64,7 +66,7 @@ node scripts/bootstrap.mjs
 ## Security & Privacy Notes
 
 - Panel routes under `/tiana/api/*` sit behind the DSH Web Server boundary. Being able to reach that server is the trust boundary: there is no second authentication, only a same-origin check plus the `x-tiana-plugin: 1` header on JSON endpoints.
-- CLI credentials and refresh tokens are never sent to the browser. Host reads only the CLI access token in memory for read-only space quota and site icon endpoints.
+- CLI credentials and refresh tokens are never sent to the browser. Host reads the CLI access token only in memory for site icons; space operations run through the CLI.
 - Public template previews are rendered in an isolated `sandbox="allow-scripts"` iframe.
 - Local template previews run on an independent HTTP port with token/cookie protection and local SQLite mock data. The port listens on loopback plus the private, CGNAT (for example Tailscale) and unique-local IPv6 addresses of the machine's network interfaces, so it is reachable wherever the DSH Web Server is. Public addresses, link-local addresses and container bridges (`docker0`, `br-*`, `veth*`, ...) are skipped.
 - Local template builds (`vite build` or the template build script) run under the DSH sandbox (`ctx.sandbox`) in `workspace-write` mode when the "Sandbox build" switch is enabled: writes are confined to the template directory, the plugin's temp directory and the preview output. **The sandbox does not restrict reads or network access**, so a hostile template build could still read files or send data out. Dependency installation (`npm ci --ignore-scripts`) is not sandboxed. If the host does not support sandboxing or the switch is turned off, the build runs unconfined and the UI displays a warning. Only clone templates you trust.
