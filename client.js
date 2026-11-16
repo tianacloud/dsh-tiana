@@ -3466,6 +3466,14 @@ window.__ModuleLoader__.load({
         setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
         setSpacesData((current) => ({ ...current, switching: tenantId, error: null }));
         try {
+          // Browser approval may already have selected the requested space.
+          if (afterLogin) {
+            const current = await tianaFetch('/tiana/api/spaces');
+            if (current.ok === true && !current.error && current.currentTenantId === tenantId) {
+              await loadSpaces();
+              return true;
+            }
+          }
           const payload = await tianaFetch(
             `/tiana/api/spaces/switch?id=${encodeURIComponent(tenantId)}`,
             { method: 'POST' },
@@ -3475,6 +3483,7 @@ window.__ModuleLoader__.load({
           }
           setSpacesData((current) => ({ ...current, currentTenantId: payload.tenantId }));
           await loadSpaces();
+          return true;
         } catch (error) {
           const requiresLogin = error.payload?.requiresLogin === true;
           const switchError = error.payload?.error ?? {
@@ -3488,7 +3497,7 @@ window.__ModuleLoader__.load({
           }));
           switchingSpaceRef.current = false;
           if (requiresLogin) {
-            setAuth({ phase: 'anonymous', error: null });
+            setAuth({ phase: 'anonymous', error: afterLogin ? switchError : null });
             setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
             if (afterLogin) {
               setNotice(error.message);
@@ -3497,6 +3506,7 @@ window.__ModuleLoader__.load({
               void startLoginRef.current?.();
             }
           }
+          return !requiresLogin;
         } finally {
           switchingSpaceRef.current = false;
           setSpacesData((current) => ({ ...current, switching: null }));
@@ -3788,11 +3798,12 @@ window.__ModuleLoader__.load({
             if (payload.loggedIn === true) {
               closeAuthWindow(popup);
               loginPopupRef.current = null;
-              setAuth({ phase: 'authenticated', error: null });
-              setLogin(null);
               const target = pendingSpaceRef.current;
               pendingSpaceRef.current = null;
-              if (target !== null) void switchSpaceRef.current?.(target, { afterLogin: true });
+              const ready = target === null || await switchSpaceRef.current?.(target, { afterLogin: true });
+              if (attempt !== loginAttemptRef.current) return;
+              setLogin(null);
+              if (ready) setAuth({ phase: 'authenticated', error: null });
               return;
             }
             if (payload.pending === true && typeof payload.verificationUri === 'string') {
@@ -3865,6 +3876,7 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         if (auth.phase !== 'pending' || !login?.verificationUri || login?.error) return undefined;
+        const attempt = loginAttemptRef.current;
         let cancelled = false;
         let timer;
 
@@ -3880,11 +3892,12 @@ window.__ModuleLoader__.load({
             if (payload.loggedIn === true) {
               closeAuthWindow(loginPopupRef.current);
               loginPopupRef.current = null;
-              setAuth({ phase: 'authenticated', error: null });
-              setLogin(null);
               const target = pendingSpaceRef.current;
               pendingSpaceRef.current = null;
-              if (target !== null) void switchSpaceRef.current?.(target, { afterLogin: true });
+              const ready = target === null || await switchSpaceRef.current?.(target, { afterLogin: true });
+              if (cancelled || attempt !== loginAttemptRef.current) return;
+              setLogin(null);
+              if (ready) setAuth({ phase: 'authenticated', error: null });
               return;
             }
             if (payload.pending === true) {

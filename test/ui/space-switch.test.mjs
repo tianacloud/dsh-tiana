@@ -161,13 +161,24 @@ test('switch requiring re-authentication opens authorization automatically, supp
   let current='ten-a';
   let needAuth=true;
   let resumeApproved=false;
+  let rotating=false;
+  let readsDuringRotation=0;
   const {page,calls} = await setup(t, async url => {
     if(url.pathname.endsWith('/status')) return {loggedIn: true, error: null};
-    if(url.pathname.endsWith('/spaces')) return {ok:true,items:spaces,currentTenantId:current};
-    if(url.pathname.endsWith('/sites')) return siteData(current);
+    if(url.pathname.endsWith('/spaces')) {
+      if (rotating) readsDuringRotation++;
+      return {ok:true,items:spaces,currentTenantId:current};
+    }
+    if(url.pathname.endsWith('/sites')) {
+      if (rotating) readsDuringRotation++;
+      return siteData(current);
+    }
     if(url.pathname.endsWith('/spaces/switch')) {
       if(needAuth) return {ok:false,tenantId:url.searchParams.get('id'),requiresLogin:true,error:{code:'AUTH_REQUIRED',message:'需要重新授权'}};
+      rotating=true;
+      await new Promise(r => setTimeout(r, 500));
       current=url.searchParams.get('id');
+      rotating=false;
       return {ok:true,tenantId:current,syncStatus:'synced'};
     }
     if(url.pathname.endsWith('/login/start')) {
@@ -209,5 +220,33 @@ test('switch requiring re-authentication opens authorization automatically, supp
   await page.getByText('站点 ten-b',{exact:true}).waitFor();
   assert.match(await page.locator('.tiana-space-trigger').innerText(),/协作空间/);
   assert.equal(calls.filter(c=>c.includes('/spaces/switch')).length,3);
+  assert.equal(readsDuringRotation,0);
   await screenshot(page,'switch-reauth-completed');
+});
+
+test('browser approval in the target space does not rotate credentials again', async t => {
+  let current = 'ten-a';
+  let approved = false;
+  const { page, calls } = await setup(t, async url => {
+    if (url.pathname.endsWith('/spaces')) return {ok:true,items:spaces,currentTenantId:current};
+    if (url.pathname.endsWith('/sites')) return siteData(current);
+    if (url.pathname.endsWith('/spaces/switch')) {
+      return {ok:false,requiresLogin:true,error:{code:'AUTH_REQUIRED',message:'Switch would invalidate this session'}};
+    }
+    if (url.pathname.endsWith('/login/start')) return {pending:true,verificationUri:'https://auth.example.test/reauth',retryAfter:1};
+    if (url.pathname.endsWith('/login/resume')) {
+      if (!approved) return {pending:true,retryAfter:1};
+      current = 'ten-b';
+      return {loggedIn:true};
+    }
+  });
+  await page.goto(`${origin}/?section=sites`);
+  await page.getByText('站点 ten-a',{exact:true}).waitFor();
+  await choose(page,'协作空间');
+  await page.getByText('https://auth.example.test/reauth',{exact:true}).waitFor();
+  approved = true;
+  await page.getByText('站点 ten-b',{exact:true}).waitFor();
+  assert.match(await page.locator('.tiana-space-trigger').innerText(), /协作空间/);
+  assert.equal(calls.filter(c=>c.includes('/spaces/switch')).length,1);
+  await screenshot(page,'approval-already-in-target');
 });
