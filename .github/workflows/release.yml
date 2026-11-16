@@ -75,9 +75,7 @@ jobs:
         with:
           name: plugin-release
           path: dist/npm-release
-      - env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: node scripts/publish-plugin.mjs dist/npm-release
+      - run: node scripts/publish-plugin.mjs dist/npm-release
   registry-test:
     needs: [build, publish]
     runs-on: ubuntu-latest
