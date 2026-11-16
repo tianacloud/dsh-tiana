@@ -44,6 +44,7 @@ jobs:
             const version=JSON.parse(readFileSync("package.json")).version;
             if(process.env.RELEASE_TAG!==`v${version}`) throw new Error("Tag and package version differ");
             appendFileSync(process.env.GITHUB_OUTPUT,`version=${version}\n`);'
+      - run: npm ci
       - run: npm test
       - run: node scripts/pack-plugin.mjs dist/npm-release
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
