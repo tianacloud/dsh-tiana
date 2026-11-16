@@ -1699,7 +1699,7 @@ async function startDevelopmentPreview(workspace) {
   await Promise.all([mkdir(previewRoot, {recursive: true}), mkdir(dataRoot, {recursive: true}), mkdir(temp, {recursive: true})]);
   workspace.previewToken = randomBytes(18).toString('hex');
   const settings = join(previewRoot, 'dev-settings.json');
-  await writeFile(settings, JSON.stringify({id: workspace.id, directory: workspace.directory, title: workspace.title, appId: workspace.appId, locale: workspace.locale, previewToken: workspace.previewToken, previewRoot}), {mode: 0o600});
+  await writeFile(settings, JSON.stringify({id: workspace.id, directory: workspace.directory, title: workspace.title, appId: workspace.appId, locale: workspace.locale, previewToken: workspace.previewToken, previewRoot, previewHost: workspace.previewHost}), {mode: 0o600});
   const env = {...commandEnvironment(), NODE_ENV: 'development'};
   let argv = [process.execPath, fileURLToPath(new URL('./dev-preview.js', import.meta.url)), settings];
   const capability = workspace.sandboxOff ? {supported: false, reason: 'disabled by user'} : await sandboxCapability();
@@ -1745,7 +1745,8 @@ async function startDevelopmentPreview(workspace) {
   });
 }
 
-async function prepareWorkspace(workspace, locale, { sandboxOff = false } = {}) {
+async function prepareWorkspace(workspace, locale, { sandboxOff = false, previewHost } = {}) {
+  workspace.previewHost = previewHost;
   if (typeof locale === 'string' && locale.length > 0) workspace.locale = guidedLocale(locale);
   if (workspace.building) return;
   workspace.sandboxOff = sandboxOff === true;
@@ -1789,7 +1790,7 @@ async function prepareWorkspace(workspace, locale, { sandboxOff = false } = {}) 
   }
 }
 
-export async function createLocalWorkspace(name, directory, { signal, resolveWorkspaceRegistry, resolveSessionController, allowDuplicate = false, locale, sandboxOff = false } = {}) {
+export async function createLocalWorkspace(name, directory, { signal, resolveWorkspaceRegistry, resolveSessionController, allowDuplicate = false, locale, sandboxOff = false, previewHost } = {}) {
   await loadWorkspaces();
   if (allowDuplicate !== true) {
     const existing = [...WORKSPACES.values()]
@@ -1870,7 +1871,7 @@ export async function createLocalWorkspace(name, directory, { signal, resolveWor
   };
   WORKSPACES.set(id, workspace);
   await persistWorkspaces();
-  void prepareWorkspace(workspace, locale, { sandboxOff });
+  void prepareWorkspace(workspace, locale, { sandboxOff, previewHost });
   return {
     ok: true,
     workspace: publicWorkspace(workspace),
@@ -1998,7 +1999,7 @@ async function workspaceForSession(sessionId, req, resolveSessionController, sig
   };
 }
 
-async function restartWorkspace(id, locale, { sandboxOff = false } = {}) {
+async function restartWorkspace(id, locale, { sandboxOff = false, previewHost } = {}) {
   await loadWorkspaces();
   const workspace = WORKSPACES.get(id);
   if (workspace === undefined) {
@@ -2015,7 +2016,7 @@ async function restartWorkspace(id, locale, { sandboxOff = false } = {}) {
       error: { code: 'WORKSPACE_BUSY', message: 'The local preview is already being prepared.' },
     };
   }
-  void prepareWorkspace(workspace, locale, { sandboxOff });
+  void prepareWorkspace(workspace, locale, { sandboxOff, previewHost });
   return { ok: true, workspace: publicWorkspace(workspace), error: null };
 }
 
@@ -2385,6 +2386,7 @@ export function registerTianaRoutes(webServer, options = {}) {
     const result = await createLocalWorkspace(name, directory, {
       signal,
       allowDuplicate: url.searchParams.get('allow') === '1',
+      previewHost: previewHostname(req),
       locale,
       sandboxOff,
       resolveWorkspaceRegistry: options.resolveWorkspaceRegistry,
@@ -2419,7 +2421,7 @@ export function registerTianaRoutes(webServer, options = {}) {
     const id = url.searchParams.get('id') ?? '';
     const locale = url.searchParams.get('lang') ?? req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
     const sandboxOff = url.searchParams.get('sandbox') === 'off';
-    return restartWorkspace(id, locale, { sandboxOff });
+    return restartWorkspace(id, locale, { sandboxOff, previewHost: previewHostname(req) });
   });
 
   add('POST', '/tiana/api/workspaces/stop', async ({ req }) => {

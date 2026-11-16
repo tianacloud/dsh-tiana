@@ -43,14 +43,14 @@ test('development preview serves Vite HMR and build-only live reload; stop close
   const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{resolveSandbox:()=>sandbox});
   t.after(dispose);
   const call=(path,method='GET')=>new Promise((resolve,reject)=>{
-    const req={method,url:path,headers:{host:'127.0.0.1','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
+    const req={method,url:path,headers:{host:'preview.example.test','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
     const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
     Promise.resolve(routes.get(path.split('?')[0])(req,res)).catch(reject);
   });
   const ready=async id=>{
     for(let i=0;i<400;i++) {
       const w=(await call(`/tiana/api/workspaces/status?id=${id}`)).workspace;
-      if(w.status!=='preparing'){assert.equal(w.status,'ready',w.error);return w;}
+      if(w.status!=='preparing'){assert.equal(w.status,'ready',w.error);w.previewUrl=w.previewUrl.replace('preview.example.test','127.0.0.1');return w;}
       await delay(100);
     }
     assert.fail('preview readiness timeout');
@@ -68,6 +68,11 @@ test('development preview serves Vite HMR and build-only live reload; stop close
     const w=await ready(id);
     assert.equal(w.warning,null);
     assert.equal(w.sandbox.confined,Boolean(sandbox));
+    if(id==='vite') {
+      const source=new URL('/src/main.js',w.previewUrl);source.search=new URL(w.previewUrl).search;
+      assert.equal((await fetch(source,{headers:{host:'preview.example.test'}})).status,200,'DSH hostname must be allowed');
+      assert.equal((await fetch(source,{headers:{host:'untrusted.example.test'}})).status,403,'unrelated host must stay blocked');
+    }
     const unauthorized=await fetch(new URL('/',w.previewUrl));assert.equal(unauthorized.status,403);
     const page=await browser.newPage();
     await page.goto(w.previewUrl);

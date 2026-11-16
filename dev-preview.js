@@ -57,7 +57,7 @@ vite = await createVite(mergeConfig(base, {
   configFile: false, root, mode: 'development', base: '/', appType: 'custom', clearScreen: false,
   define: {'process.env.NODE_ENV': JSON.stringify('development')},
   resolve: {alias: [{find: '@tianacloud/serverless', replacement: shim}]},
-  server: {middlewareMode: true, hmr: {server: servers[0], clientPort: port}, fs: {strict: true, allow: [root, workspace.previewRoot]}},
+  server: {allowedHosts: workspace.previewHost ? [workspace.previewHost] : [], middlewareMode: true, hmr: {server: servers[0], clientPort: port}, fs: {strict: true, allow: [root, workspace.previewRoot]}},
 }));
 for (const server of servers) {
   // Register authorization before Vite's upgrade listener, including other bind addresses.
