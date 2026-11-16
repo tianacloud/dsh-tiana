@@ -780,7 +780,17 @@ function buildFailure(outcome) {
   return new Error(`Template build failed.${hint}\n${lastOutput(outcome.result)}`);
 }
 
-function resolveCloneDirectory(input, name) {
+export function templateFolderName(title, fallback) {
+  const cleaned = String(title ?? '').normalize('NFC')
+    .replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '-')
+    .trim().replace(/[. ]+$/g, '');
+  if (!cleaned || cleaned === '.' || cleaned === '..') return fallback;
+  const shortened = Array.from(cleaned).slice(0, 70).join('');
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(shortened)
+    ? `_${shortened}` : shortened;
+}
+
+export function resolveCloneDirectory(input, name) {
   const raw = typeof input === 'string' ? input.trim() : '';
   let target = raw;
   if (target === '') {
@@ -812,7 +822,16 @@ export async function cloneTemplate(name, directory, { signal } = {}) {
   }
   let target;
   try {
-    target = resolveCloneDirectory(directory, name);
+    let folder = name;
+    if (typeof directory !== 'string' || directory.trim() === '') {
+      const detail = await fetchPublicJson(
+        `${marketplaceOrigin()}/api/v1/template-catalog/${encodeURIComponent(name)}?channel=market`,
+        { signal },
+      );
+      if (detail.template_id !== name) throw new Error('Template identity did not match.');
+      folder = templateFolderName(detail.display_name, name);
+    }
+    target = resolveCloneDirectory(directory, folder);
   } catch (error) {
     return {
       ok: false,

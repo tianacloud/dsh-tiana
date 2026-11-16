@@ -2043,7 +2043,10 @@ window.__ModuleLoader__.load({
                               h('input', {
                                 type: 'text',
                                 value: directory,
-                                placeholder: `~/TianaTemplates/${template.id}`,
+                                placeholder: `~/TianaTemplates/${copyFolderBase}`,
+                                autoCorrect: 'off',
+                                autoCapitalize: 'none',
+                                spellCheck: false,
                                 disabled: locked,
                                 onChange: (event) => setDirectory(event.target.value),
                               }),

@@ -100,6 +100,7 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   await dialog.getByRole('button', {name: '克隆到本地', exact: true}).waitFor();
   assert.equal(await dialog.getByRole('link', {name: '打开网页版安装'}).count(), 1);
   assert.equal(calls.some(c => c.includes('/templates/clone')), false);
+  await dialog.getByPlaceholder('~/TianaTemplates/示例模板', {exact:true}).waitFor();
   const a = await cards.nth(0).boundingBox(), b = await cards.nth(1).boundingBox();
   assert.equal(a.y,b.y); assert.ok(a.x+a.width <= b.x);
   const localButton=await dialog.getByRole('button',{name:'克隆到本地',exact:true}).boundingBox();
