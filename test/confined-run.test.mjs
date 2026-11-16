@@ -80,3 +80,10 @@ test('probeSandboxSupport detects whether the host sandbox supports workspace-wr
   assert.equal(unsupported.supported, false);
   assert.match(unsupported.reason, /additionalWritableRoots/);
 }));
+
+
+test('sandbox probe rejects wrappers that exist but cannot run on the system', () => withDir(async dir => {
+  const {probeSandboxSupport}=await import('../confined-run.js');
+  const sandbox={confine:async()=>({argv:[NODE,'-e','process.exit(1)'],enforcement:'unusable'})};
+  assert.equal((await probeSandboxSupport(sandbox,{probeRoot:dir,env:{}})).supported,false);
+}));

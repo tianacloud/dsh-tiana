@@ -44,11 +44,13 @@ export async function probeSandboxSupport(sandbox, { probeRoot, env = process.en
   try {
     mkdirSync(probeRoot, { recursive: true });
     const root = realpathSync(probeRoot);
-    const wrapped = await sandbox.confine(['node', '--version'], {
+    const wrapped = await sandbox.confine([process.execPath, '--version'], {
       mode: 'workspace-write',
       workspaceRoot: root,
       additionalWritableRoots: [root],
     });
+    const probe = await runCommand(wrapped.argv[0], wrapped.argv.slice(1), { cwd: root, env, timeoutMs: 5000 });
+    if (probe.code !== 0) throw new Error('The sandbox runner cannot execute on this system.');
     return {
       supported: true,
       enforcement: wrapped.enforcement ?? null,

@@ -70,7 +70,7 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   const {page, calls} = await setup(t, async url => {
     if (url.pathname.endsWith('/login/start')) return loginResult;
     if (url.pathname.endsWith('/login/resume')) return resumeResult;
-    if (url.pathname.endsWith('/status')) return {loggedIn: false};
+    if (url.pathname.endsWith('/status')) return {loggedIn: false, error: {code: 'AUTH_REQUIRED', message: 'Login required'}};
     if (url.pathname.endsWith('/templates')) return {items: [{name: 'sample', display_name: '示例模板', description: '安装方式测试'}], categories: [], nextCursor: null, origin: 'https://console.example.test'};
   });
   await page.goto(origin);
@@ -84,8 +84,8 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   await dialog.getByRole('button', {name: '登录 Tiana', exact: true}).waitFor();
   await hidden();
   const cards = dialog.locator('.tiana-install-option');
-  const a = await cards.nth(0).boundingBox(), b = await cards.nth(1).boundingBox();
-  assert.equal(a.y,b.y); assert.ok(a.x+a.width <= b.x);
+  assert.equal(await cards.count(), 0);
+  assert.equal(await dialog.getByText('Login required', {exact: true}).count(), 0);
   await screenshot(page,'anonymous');
   await dialog.getByRole('button', {name: '登录 Tiana', exact: true}).click();
   await dialog.getByText('测试登录失败', {exact: true}).waitFor();
@@ -100,6 +100,8 @@ test('install choices stay hidden until login succeeds in the open dialog', asyn
   await dialog.getByRole('button', {name: '克隆到本地', exact: true}).waitFor();
   assert.equal(await dialog.getByRole('link', {name: '打开网页版安装'}).count(), 1);
   assert.equal(calls.some(c => c.includes('/templates/clone')), false);
+  const a = await cards.nth(0).boundingBox(), b = await cards.nth(1).boundingBox();
+  assert.equal(a.y,b.y); assert.ok(a.x+a.width <= b.x);
   await screenshot(page,'authenticated');
   await page.setViewportSize({width: 480, height: 900});
   const c = await cards.nth(0).boundingBox(), d = await cards.nth(1).boundingBox();

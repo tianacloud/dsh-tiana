@@ -1509,6 +1509,7 @@ function closeWorkspaceServer(workspace) {
   for (const server of servers) {
     try {
       server.close();
+      server.closeAllConnections();
     } catch {
       // Already closed.
     }
@@ -1858,7 +1859,7 @@ async function workspaceForSession(sessionId, req, resolveSessionController, sig
         const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
         const value = await controller.list({}, combined);
         const item = Array.isArray(value?.items)
-          ? value.items.find((entry) => String(entry?.id) === sessionId)
+          ? value.items.find((entry) => String(entry?.sessionId) === sessionId)
           : undefined;
         if (typeof item?.cwd === 'string' && item.cwd.length > 0) {
           const target = resolve(item.cwd);
@@ -1897,6 +1898,53 @@ async function restartWorkspace(id, locale, { sandboxOff = false } = {}) {
   }
   void prepareWorkspace(workspace, locale, { sandboxOff });
   return { ok: true, workspace: publicWorkspace(workspace), error: null };
+}
+
+export async function stopLocalPreview(id) {
+  await loadWorkspaces();
+  const workspace = WORKSPACES.get(id);
+  if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
+  if (workspace.building) return { ok: false, error: { code: 'WORKSPACE_BUSY', message: 'Wait for the build to finish before stopping the preview.' } };
+  closeWorkspaceServer(workspace);
+  closeWorkspaceDatabase(workspace);
+  workspace.status = 'stopped';
+  workspace.phase = 'stopped';
+  workspace.readyAt = null;
+  await persistWorkspaces();
+  return { ok: true, workspace: publicWorkspace(workspace), error: null };
+}
+
+export async function openLocalSession(id, resolveController, locale, signal) {
+  await loadWorkspaces();
+  const workspace = WORKSPACES.get(id);
+  if (!workspace) return { ok: false, error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' } };
+  if (workspace.sessionOpening) return workspace.sessionOpening;
+  workspace.sessionOpening = (async () => {
+    try {
+      const controller = resolveController?.();
+      if (!controller?.list) throw new Error('The Harness session controller is unavailable.');
+      const timeout = AbortSignal.timeout(10_000);
+      const result = await controller.list({}, signal ? AbortSignal.any([signal, timeout]) : timeout);
+      if (!Array.isArray(result?.items)) throw new Error('The Harness session list is unavailable.');
+      // DSH returns visible (non-blank) sessions ordered by latest activity.
+      const latest = result.items.find(item => item.blank !== true && !item.parentSessionId && typeof item.sessionId === 'string' && typeof item.cwd === 'string' && resolve(item.cwd) === resolve(workspace.directory));
+      let session;
+      if (latest) session = { ok: true, ready: true, sessionId: latest.sessionId };
+      else {
+        if (!workspace.dshWorkspace?.ok) throw new Error('The Harness workspace is unavailable.');
+        session = await createDshSession(resolveController, workspace.dshWorkspace, locale);
+        if (session.ok) session = await markGuidedSessionReady(resolveController, session);
+        if (!session.ok || !session.ready) throw new Error(session.error?.message ?? session.readyError?.message ?? 'The guided session could not be created.');
+      }
+      workspace.dshSession = session;
+      await persistWorkspaces();
+      return { ok: true, session, error: null };
+    } catch (error) {
+      return { ok: false, session: null, error: { code: 'DSH_SESSION_FAILED', message: error instanceof Error ? error.message : String(error) } };
+    }
+  })();
+  try { return await workspace.sessionOpening; }
+  finally { workspace.sessionOpening = null; }
 }
 
 function closeAllWorkspacePreviews() {
@@ -2253,6 +2301,15 @@ export function registerTianaRoutes(webServer, options = {}) {
     const locale = url.searchParams.get('lang') ?? req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
     const sandboxOff = url.searchParams.get('sandbox') === 'off';
     return restartWorkspace(id, locale, { sandboxOff });
+  });
+
+  add('POST', '/tiana/api/workspaces/stop', async ({ req }) => {
+    return stopLocalPreview(new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '');
+  });
+  add('POST', '/tiana/api/workspaces/session', async ({ req, signal }) => {
+    const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
+    const locale = req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
+    return openLocalSession(id, options.resolveSessionController, locale, signal);
   });
 
   add('POST', '/tiana/api/sites/delete', async ({ req, signal }) => {

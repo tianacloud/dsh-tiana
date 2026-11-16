@@ -93,7 +93,9 @@ window.__ModuleLoader__.load({
     const en = {
       panel: 'Tiana',
       'nav.label': 'Tiana sections',
-      'nav.sites': 'Sites',
+      'nav.sites': 'My sites',
+      'local.stopPreview': 'Stop preview',
+      'local.popupBlocked': 'Allow pop-ups, then click Open preview.',
       'nav.local': 'Local projects',
       'nav.templates': 'Templates',
       'nav.footer': 'Tiana Cloud',
@@ -287,7 +289,9 @@ window.__ModuleLoader__.load({
     const zh = {
       panel: 'Tiana',
       'nav.label': 'Tiana 导航',
-      'nav.sites': '站点',
+      'nav.sites': '我的站点',
+      'local.stopPreview': '停止预览',
+      'local.popupBlocked': '请允许弹出标签页，或点击打开预览。',
       'nav.local': '本地项目',
       'nav.templates': '模板',
       'nav.footer': 'Tiana Cloud',
@@ -652,7 +656,7 @@ window.__ModuleLoader__.load({
     function openPreviewWindow() {
       try {
         if (typeof window === 'undefined') return null;
-        const popup = window.open('about:blank', 'tiana-local-preview', 'popup=yes,width=1100,height=800');
+        const popup = window.open('about:blank', '_blank');
         if (popup) {
           try {
             popup.opener = null;
@@ -1917,6 +1921,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             className: 'tiana-dialog tiana-fork-dialog',
+            style: authenticated ? undefined : { maxWidth: 420 },
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': t('templates.chooseInstall'),
@@ -1940,9 +1945,9 @@ window.__ModuleLoader__.load({
             h('div', { className: 'tiana-dialog-kicker' }, t('templates.chooseInstall')),
             h('h2', { className: 'tiana-dialog-title' }, template.title),
             h(TemplateAuthor, { template, t }),
-            h('p', { className: 'tiana-dialog-desc' }, t('templates.forkHint')),
+            authenticated ? h('p', { className: 'tiana-dialog-desc' }, t('templates.forkHint')) : null,
             authenticated ? null : h(AuthGate, { t, auth, ...authControls, reason: t('templates.installLogin') }),
-            h('div', { className: 'tiana-install-options' },
+            authenticated ? h('div', { className: 'tiana-install-options' },
             h(
               'section',
               { className: 'tiana-install-option' },
@@ -2181,7 +2186,7 @@ window.__ModuleLoader__.load({
                     t('templates.installTianaAction'),
                   ),
             ),
-            ),
+            ) : null,
           ),
         ),
       );
@@ -2429,6 +2434,15 @@ window.__ModuleLoader__.load({
       onRetryTemplates, onLoadMore, onRetryMore, hasMore, page, onPrevious,
       installOrigin, onOpenSession,
     }) {
+      const sentinelRef = React.useRef(null);
+      React.useEffect(() => {
+        if (!hasMore || templatesLoading || templatesLoadingMore || templatesMoreError || !sentinelRef.current) return undefined;
+        const observer = new IntersectionObserver(entries => {
+          if (entries.some(entry => entry.isIntersecting)) onLoadMore();
+        }, { root: sentinelRef.current.closest('.tiana-content-scroll'), rootMargin: '240px' });
+        observer.observe(sentinelRef.current);
+        return () => observer.disconnect();
+      }, [hasMore, templatesLoading, templatesLoadingMore, templatesMoreError, onLoadMore]);
       const authenticated = auth.phase === 'authenticated';
       const [selectedName, setSelectedName] = React.useState(null);
       const [installTarget, setInstallTarget] = React.useState(null);
@@ -2578,7 +2592,7 @@ window.__ModuleLoader__.load({
                       }),
                     ),
                   ),
-                  h(Pagination, { t, page, busy: templatesLoading || templatesLoadingMore, hasNext: hasMore, onPrevious, onNext: onLoadMore }),
+                  h('div', { ref: sentinelRef, className: 'tiana-template-sentinel', style: { height: 1 }, 'aria-hidden': true }),
                   templatesLoadingMore
                     ? h(
                         'div',
@@ -2813,30 +2827,64 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function LocalProjectsView({ t, items, sandboxCapability, sandboxEnabled, onToggleSandbox, loading, error, onRefresh, onPrepare, onOpenSession }) {
+    function LocalProjectsView({ t, items, sandboxCapability, sandboxEnabled, onToggleSandbox, loading, error, onRefresh, onPrepare, onStop, onOpenSession }) {
       const [busyId, setBusyId] = React.useState(null);
       const [actionError, setActionError] = React.useState(null);
       const useSandbox = sandboxCapability?.supported === true && sandboxEnabled;
+      const pendingPreview = React.useRef(null);
+      React.useEffect(() => {
+        const pending = pendingPreview.current;
+        if (!pending) return;
+        const workspace = items.find(item => item.id === pending.id);
+        if (workspace?.status === 'ready' && workspace.previewUrl && workspace.readyAt !== pending.readyAt) {
+          if (pending.popup && !pending.popup.closed) pending.popup.location.href = workspace.previewUrl;
+          else setActionError(t('local.popupBlocked'));
+          pendingPreview.current = null;
+        } else if (workspace?.status === 'failed') {
+          closeAuthWindow(pending.popup);
+          pendingPreview.current = null;
+        }
+      }, [items, t]);
+      React.useEffect(() => () => {
+        closeAuthWindow(pendingPreview.current?.popup);
+      }, []);
 
       const startPreview = async (workspace) => {
         if (busyId !== null) return;
         setBusyId(workspace.id);
         setActionError(null);
+        closeAuthWindow(pendingPreview.current?.popup);
+        const popup = openPreviewWindow();
+        pendingPreview.current = { id: workspace.id, popup, readyAt: workspace.readyAt };
         try {
           await onPrepare(workspace.id, !useSandbox);
         } catch (cause) {
+          closeAuthWindow(popup);
+          pendingPreview.current = null;
           setActionError(cause instanceof Error ? cause.message : String(cause));
         } finally {
           setBusyId(null);
         }
       };
 
-      const openSession = (workspace) => {
-        const session = workspace.dshSession;
-        if (!session?.ok || session.ready !== true || typeof onOpenSession !== 'function') return;
-        if (!onOpenSession(session.sessionId)) {
-          setActionError(t('templates.sessionFailed'));
-        }
+      const openSession = async (workspace) => {
+        if (busyId !== null) return;
+        setBusyId(workspace.id);
+        setActionError(null);
+        try {
+          const payload = await tianaFetch(`/tiana/api/workspaces/session?id=${encodeURIComponent(workspace.id)}`, { method: 'POST' });
+          if (payload.error || !payload.session?.ready) throw new Error(payload.error?.message || t('templates.sessionFailed'));
+          if (typeof onOpenSession !== 'function' || !onOpenSession(payload.session.sessionId)) throw new Error(t('templates.sessionFailed'));
+        } catch (cause) {
+          setActionError(cause instanceof Error ? cause.message : String(cause));
+        } finally { setBusyId(null); }
+      };
+      const stopPreview = async (workspace) => {
+        setBusyId(workspace.id);
+        setActionError(null);
+        try { await onStop(workspace.id); }
+        catch (cause) { setActionError(cause instanceof Error ? cause.message : String(cause)); }
+        finally { setBusyId(null); }
       };
 
       return h(
@@ -2902,8 +2950,6 @@ window.__ModuleLoader__.load({
                     items.map((workspace) => {
                       const status = workspace.status ?? 'stopped';
                       const statusLabel = t(`local.status.${status}`);
-                      const sessionReady = workspace.dshSession?.ok === true
-                        && workspace.dshSession.ready === true;
                       const cover = typeof workspace.template === 'string' && workspace.template.length > 0
                         ? `/tiana/api/template-cover?name=${encodeURIComponent(workspace.template)}`
                         : null;
@@ -3018,13 +3064,15 @@ window.__ModuleLoader__.load({
                                 busyId === workspace.id ? t('local.building') : t('templates.retryBuild'),
                               )
                             : null,
-                          sessionReady
+                          status === 'ready' ? h('button', { type: 'button', className: 'tiana-btn tiana-btn-ghost tiana-btn-small', disabled: busyId !== null, onClick: () => stopPreview(workspace) }, t('local.stopPreview')) : null,
+                          workspace.dshWorkspace?.ok
                             ? h(
                                 'button',
                                 {
                                   type: 'button',
                                   className: 'tiana-btn tiana-btn-ghost tiana-btn-small',
                                   onClick: () => openSession(workspace),
+                                  disabled: busyId !== null,
                                 },
                                 t('local.openSession'),
                               )
@@ -3385,7 +3433,7 @@ window.__ModuleLoader__.load({
             setAuth({ phase: 'authenticated', error: null });
             return;
           }
-          if (payload.error) {
+          if (payload.error && payload.error.code !== 'AUTH_REQUIRED') {
             setAuth({ phase: 'error', error: payload.error });
             return;
           }
@@ -3627,7 +3675,7 @@ window.__ModuleLoader__.load({
               loading: false,
               loadingMore: false,
               page,
-              items: mapped,
+              items: reset ? mapped : [...new Map([...current.items, ...mapped].map(item => [item.id, item])).values()],
               categories,
               nextCursor: payload.nextCursor ?? null,
               origin: typeof payload.origin === 'string' ? payload.origin : current.origin,
@@ -4019,6 +4067,11 @@ window.__ModuleLoader__.load({
                   error: localData.error,
                   onRefresh: () => loadLocalProjects(),
                   onPrepare: prepareLocal,
+                  onStop: async id => {
+                    const payload = await tianaFetch(`/tiana/api/workspaces/stop?id=${encodeURIComponent(id)}`, { method: 'POST' });
+                    if (payload.error) throw new Error(payload.error.message);
+                    await loadLocalProjects(true);
+                  },
                   onOpenSession,
                 })
               : section === 'sites'

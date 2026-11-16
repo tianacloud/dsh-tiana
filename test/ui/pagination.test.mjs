@@ -14,7 +14,7 @@ before(async () => {
       window.__ModuleLoader__ = {load({factory}) {
         let main, dictionary;
         const t = key => dictionary.zh[key] ?? key;
-        const ctx = {effect: fn => fn(), get: () => undefined,
+        const ctx = {effect: fn => fn(), get: name => name === 'uiWorkspace' ? {openSession: id => {window.openedSession=id;}} : undefined,
           locale: {register: (ns,value) => {dictionary=value}, bind: () => t, getLocale: () => ({active:'zh'})},
           slots: {inject: (name,fn) => fn(), register: (spec, component) => {if(spec.name==='main') main=component;}}};
         factory(name => {if(name==='react') return React; throw new Error(name)}).apply(ctx);
@@ -115,37 +115,28 @@ test('sites replace each page, search remotely, preserve errors and ignore late 
   await screenshot(page, 'sites-search');
 });
 
-test('template pages are explicit, replace cards and retry the requested previous page', async t => {
-  let failFirst = false;
+test('market scroll appends pages and retries failures without losing existing cards', async t => {
+  let failSecond = true;
   const { page, calls } = await setup(t, async url => {
     if (!url.pathname.endsWith('/templates')) return;
     const p = url.searchParams.has('after') ? 2 : 1;
-    if (p === 1 && failFirst) return { ok: false, error: { message: '模板翻页失败' } };
-    return templatePage(p, url.searchParams.get('q') ?? '');
+    if (p === 2 && failSecond) return { error: { message: '加载失败' } };
+    return templatePage(p);
   });
   await page.goto(origin);
   await page.getByText('模板 1-0', { exact: true }).waitFor();
-  assert.equal(await page.locator('.tiana-template-card').count(), 18);
-  await page.locator('.tiana-content-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
-  assert.equal(calls.filter(c => c.startsWith('/tiana/api/templates')).length, 1);
+  assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).count(), 0);
   await screenshot(page, 'templates-first');
-  await page.getByRole('button', { name: '下一页', exact: true }).click();
-  await page.getByText('模板 2-0', { exact: true }).waitFor();
+  await page.locator('.tiana-template-sentinel').scrollIntoViewIfNeeded();
+  await page.getByRole('button', {name: '重试', exact: true}).waitFor();
   assert.equal(await page.locator('.tiana-template-card').count(), 18);
-  assert.equal(await page.getByText('模板 1-0', { exact: true }).count(), 0);
-  assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isDisabled(), true);
-  await screenshot(page, 'templates-second');
-  failFirst = true;
-  await page.getByRole('button', { name: '上一页', exact: true }).click();
-  await page.getByText('加载该页模板失败。', { exact: true }).waitFor();
-  failFirst = false;
-  await page.getByRole('button', { name: '重试', exact: true }).click();
-  await page.getByText('模板 1-0', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '工具', exact: true }).click();
-  await page.waitForRequest(r => new URL(r.url()).searchParams.get('category') === '1');
-  await page.getByPlaceholder('搜索模板').fill('匹配模板');
-  await page.waitForRequest(r => new URL(r.url()).searchParams.get('q') === '匹配模板');
-  assert.equal(calls.filter(c => c.startsWith('/tiana/api/sites')).length, 0);
+  failSecond = false;
+  await page.getByRole('button', {name: '重试', exact: true}).click();
+  await page.getByText('模板 2-0', { exact: true }).waitFor();
+  assert.equal(await page.locator('.tiana-template-card').count(), 36);
+  assert.equal(await page.getByText('模板 1-0', {exact: true}).count(), 1);
+  assert.equal(calls.filter(c => c.includes('after=cursor-2')).length, 2);
+  await screenshot(page, 'templates-appended');
 });
 
 test('sites deduplicate clicks and discard pages from a previous space or logged-out account', async t => {
@@ -202,7 +193,7 @@ test('template search discards delayed pages, refresh returns to page one and cl
   });
   await page.goto(origin);
   await page.getByText('模板 1-0', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '下一页', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await page.locator('.tiana-template-sentinel').scrollIntoViewIfNeeded();
   await page.getByText('模板 2-0', { exact: true }).waitFor();
   assert.equal(calls.filter(c => c.includes('after=cursor-2')).length, 1);
   await page.getByRole('button', { name: '刷新模板', exact: true }).click();
@@ -216,4 +207,42 @@ test('template search discards delayed pages, refresh returns to page one and cl
   await response;
   assert.equal(await page.getByText('old', { exact: true }).count(), 0);
   assert.equal(calls.filter(c => c.includes('q=new')).some(c => c.includes('after=')), false);
+});
+
+
+test('local preview defaults to sandbox, opens a tab after build, stops, and resolves sessions', async t => {
+  let workspace = {id: 'local-test', title: '本地测试', directory: '/fixture/project', status: 'stopped', createdAt: '2026-11-16T09:00:00Z', dshWorkspace: {ok: true, id: 'ws', title: '本地测试'}, dshSession: {ok: true, ready: true, sessionId: 'deleted'}};
+  let supported = true;
+  const {page, calls} = await setup(t, async url => {
+    if (url.pathname.endsWith('/workspaces')) return {items: [workspace], sandbox: {supported}};
+    if (url.pathname.endsWith('/workspaces/prepare')) {
+      workspace = {...workspace, status: 'preparing', readyAt: null};
+      setTimeout(() => {workspace = {...workspace, status: 'ready', readyAt: 'now', previewUrl: origin + '/preview-fixture'}}, 300);
+      return {workspace};
+    }
+    if (url.pathname.endsWith('/workspaces/stop')) {workspace = {...workspace, status: 'stopped', previewUrl: null}; return {ok: true};}
+    if (url.pathname.endsWith('/workspaces/session')) return {session: {ready: true, sessionId: 'latest-surviving'}};
+  });
+  await page.goto(`${origin}/?section=local`);
+  const toggle=page.getByRole('switch', {name: '沙箱构建'});
+  await toggle.waitFor();
+  assert.equal(await toggle.isChecked(), true);
+  const popupPromise=page.waitForEvent('popup');
+  await page.getByRole('button',{name:'启动预览',exact:true}).click();
+  const popup=await popupPromise; t.after(()=>popup.close());
+  await popup.waitForURL(origin + '/preview-fixture');
+  assert.equal(calls.some(c=>c.includes('/prepare?') && c.includes('sandbox=off')),false);
+  await page.getByRole('button',{name:'停止预览',exact:true}).waitFor();
+  await screenshot(page,'local-ready');
+  await page.getByRole('button',{name:'停止预览',exact:true}).click();
+  await page.getByRole('button',{name:'启动预览',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'停止预览',exact:true}).count(),0);
+  await page.getByRole('button',{name:'打开会话',exact:true}).click();
+  await page.waitForFunction(()=>window.openedSession === 'latest-surviving');
+  supported=false;
+  await page.reload();
+  await page.getByRole('button',{name:'启动预览',exact:true}).waitFor();
+  assert.equal(await toggle.isChecked(),false);
+  assert.equal(await toggle.isDisabled(),true);
+  await screenshot(page,'local-stopped-unsupported');
 });
