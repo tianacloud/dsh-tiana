@@ -1,8 +1,8 @@
 {
   "name": "@tianacloud/dsh-tiana",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "type": "module",
-  "description": "Tiana plugin for DeepSeek Harness: installs the Tiana CLI and DSH-only skills, browses the template marketplace, and manages sites and local previews.",
+  "description": "DeepSeek Harness 的 Tiana 插件：浏览应用模板、本地开发预览、管理站点与空间。",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

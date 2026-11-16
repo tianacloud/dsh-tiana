@@ -91,6 +91,7 @@ test('fresh home installs the CLI and DSH-only skills', async (t) => {
 
 test('an already-ready home still updates CLI and skills to latest', async (t) => {
   const { dir, env } = await makeHome();
+  env.TIANA_FROM = 'other-host';
   t.after(() => rm(dir, { recursive: true, force: true }));
   await createSkills(dir);
   const { run, calls } = makeRunner();
@@ -102,6 +103,10 @@ test('an already-ready home still updates CLI and skills to latest', async (t) =
   assert.equal(state.skills.installed, true);
   assert.ok(calls.some((call) => call.args.includes('@tianacloud/cli@latest')));
   assert.ok(calls.some((call) => call.args.includes('@tianacloud/agent-skills@latest')));
+  const versionCalls = calls.filter((call) => call.command.endsWith('tiana'));
+  assert.equal(versionCalls.length, 2);
+  for (const call of versionCalls) assert.equal(call.env.TIANA_FROM, 'dsh');
+  assert.equal(env.TIANA_FROM, 'other-host');
 });
 
 test('missing skills are installed and an existing CLI is refreshed', async (t) => {

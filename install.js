@@ -250,7 +250,7 @@ async function runBootstrap({ env = process.env, log = () => {}, run = runComman
 async function readCliVersion(env, run, signal) {
   try {
     const result = await run(commandName('tiana'), ['version'], {
-      env,
+      env: { ...env, TIANA_FROM: 'dsh' },
       timeoutMs: CLI_CHECK_TIMEOUT_MS,
       signal,
     });

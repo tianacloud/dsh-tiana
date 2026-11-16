@@ -1,76 +1,33 @@
-# @tianacloud/dsh-tiana
+# Tiana for DSH
 
 [简体中文](README.md) | English
 
-Tiana plugin bundle for DeepSeek Harness (DSH).
+Browse app templates, develop local projects, and manage your Tiana sites in DeepSeek Harness (DSH).
 
 ## Features
 
-- **Automatic toolchain bootstrap**: On activation, installs or updates `@tianacloud/cli@latest` (requires at least `1.0.30`) and installs the official Tiana agent skills (`tiana`, `tiana-function`, `tiana-git`, `tiana-sqlite`, `tiana-web`) via `@tianacloud/agent-skills@latest` into `$DSH_HOME/skills` without writing to shared `~/.agents/skills`.
-- **Template marketplace**: Browse public Tiana web app templates by category or search query without signing in, inspect live sandboxed previews, copy template prompts, or clone templates locally into `~/TianaTemplates/<template-display-name>` with an isolated local SQLite preview and a DSH workspace session.
-- **Sandbox build toggle**: Includes a unified "Sandbox build" toggle switch for local template builds, enabled by default when supported by the host machine and disabled (unchecked) when the host does not support sandboxing.
-- **Sites & local projects**: Sign in via Tiana CLI browser authorization, list and manage deployed sites (open, manage in Tiana Console, or delete a site while keeping associated SQLite/Git resources), and start, stop or rebuild local previews. Vite templates use development mode and hot updates; other templates rebuild and refresh when source files change.
-- **Spaces and sign-in**: Multi-space accounts display their current space. Selecting another space switches directly, opening authorization automatically when needed. Pending sign-in can be cancelled.
-- **Project conversations**: Open the project’s most recent available conversation, or create a guided conversation in its DSH workspace when none exists. Archived conversations are excluded.
+- **Discover templates**: Search, preview, and clone apps into local projects.
+- **Build through conversation**: Open a project conversation and describe the changes you want.
+- **Preview locally**: Start a preview, see changes update automatically, and stop it whenever you like.
+- **Manage sites and spaces**: Sign in to view, open, and manage your apps or switch Tiana spaces.
+- **Ready-to-use tools**: Activating the plugin prepares the Tiana CLI and official Skills.
 
-## List pagination
+## Install
 
-Sites read 20 items per page, with previous/next controls replacing the visible page. The marketplace appends the next batch of 18 items as you scroll, without fetching the entire collection in advance. Search, category changes and refresh restart the list. Site search filters names or instance IDs on the server before pagination.
+Requires Node.js 22.13+ and DSH 0.2.2-rc.1+.
 
-Activation updates the official CLI automatically. Unsupported CLIs receive an upgrade message; there is no full-list fallback.
-
-## Prerequisites
-
-- **Node.js**: `>=22.13.0` (uses built-in `node:sqlite` for local template previews)
-- **DeepSeek Harness**: `>=0.2.2-rc.1`
-- Network access to npm registry and `https://console.tianacloud.com` (or `TIANA_API_ORIGIN`) for initial bootstrap and template marketplace browsing.
-
-## Installation
-
-### Via DeepSeek Harness UI / `plugin_manager`
-
-Install bundle target:
-
-```text
-@tianacloud/dsh-tiana
-```
-
-### Via DSH CLI
-
-Replace `<profile>` with your DSH profile name (for example `web`):
+Install `@tianacloud/dsh-tiana` through the DSH plugin manager, or run:
 
 ```sh
-dsh plugin --profile <profile> add @tianacloud/dsh-tiana
+dsh plugin --profile web add @tianacloud/dsh-tiana@latest
 ```
 
-After installation, the Host plugin runs the latest-toolchain bootstrap and writes diagnostics to `$DSH_HOME/tiana-plugin/install-state.json`. You can also run the bootstrap manually from the installed package directory:
+Replace `web` with your actual profile name.
 
-```sh
-node scripts/bootstrap.mjs
-```
+## Get started
 
-## Configuration
+1. Open **Tiana** in the DSH sidebar and browse the template marketplace.
+2. Clone a template, then open its preview or project conversation to customize it.
+3. Sign in and use **My Sites** to view apps, open their management pages, or switch spaces. Browser authorization opens automatically when needed, and pending sign-in can be cancelled.
 
-| Environment Variable | Default | Description |
-| --- | --- | --- |
-| `TIANA_API_ORIGIN` | `https://console.tianacloud.com` | Overrides the Tiana API/console origin. Must be an `http:` or `https:` origin without path, credentials, query, or fragment. |
-| `DSH_HOME` | `~/.dsh` | DSH home directory used for `$DSH_HOME/skills` and `$DSH_HOME/tiana-plugin`. |
-| `TIANA_LOCAL_BUILD_SANDBOX` | _(unset)_ | Set to `off` to disable DSH sandbox support for local template builds on the host. |
-
-## Side Effects & Uninstall
-
-- Installing and activating this plugin installs `@tianacloud/cli` globally (preferring user-writable `pnpm` global bin, falling back to `npm`) and writes the five official Tiana skills into `$DSH_HOME/skills`.
-- Official skills already in `$DSH_HOME/skills` are refreshed to latest. Shared `~/.agents/skills` and project-level `.dsh/skills` / `.agents/skills` are not written by the plugin.
-- **Uninstalling `@tianacloud/dsh-tiana` does NOT automatically remove** the globally installed `tiana` CLI, `$DSH_HOME/skills`, cloned directories under `~/TianaTemplates/`, or `$DSH_HOME/tiana-plugin/` state. DSH has no uninstall hook or options UI for plugins, so remove those manually if no longer needed.
-
-## Security & Privacy Notes
-
-- Panel routes under `/tiana/api/*` sit behind the DSH Web Server boundary. Being able to reach that server is the trust boundary: there is no second authentication, only a same-origin check plus the `x-tiana-plugin: 1` header on JSON endpoints.
-- CLI credentials and refresh tokens are never sent to the browser. Host reads the CLI access token only in memory for site icons; space operations run through the CLI.
-- Public template previews are rendered in an isolated `sandbox="allow-scripts"` iframe.
-- Local template previews run on an independent HTTP port with token/cookie protection and local SQLite mock data. The port listens on loopback plus the private, CGNAT (for example Tailscale) and unique-local IPv6 addresses of the machine's network interfaces, so it is reachable wherever the DSH Web Server is. Public addresses, link-local addresses and container bridges (`docker0`, `br-*`, `veth*`, ...) are skipped.
-- Local template builds (`vite build` or the template build script) run under the DSH sandbox (`ctx.sandbox`) in `workspace-write` mode when the "Sandbox build" switch is enabled: writes are confined to the template directory, the plugin's temp directory and the preview output. **The sandbox does not restrict reads or network access**, so a hostile template build could still read files or send data out. Dependency installation (`npm ci --ignore-scripts`) is not sandboxed. If the host does not support sandboxing or the switch is turned off, the build runs unconfined and the UI displays a warning. Only clone templates you trust.
-
-## License
-
-Apache-2.0 — see [LICENSE](LICENSE).
+[Apache-2.0](LICENSE)

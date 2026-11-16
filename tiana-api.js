@@ -199,7 +199,6 @@ const MAX_COVER_BYTES = 3 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
 const CLONE_TIMEOUT_MS = 240_000;
 const WORKSPACE_BUILD_TIMEOUT_MS = 300_000;
-const ACQUISITION_SOURCE = 'dsh';
 const GUIDED_SESSION_TEXT = {
   en: {
     title: 'Customize template: tell me what features, pages, styles, or data to change',
@@ -225,18 +224,6 @@ function localizedFunctionsWarning(locale) {
     : 'This template declares backend functions; the local preview only mocks SQLite and does not run functions.';
 }
 
-function withAcquisitionSource(rawUrl) {
-  if (typeof rawUrl !== 'string' || rawUrl.length === 0) return rawUrl;
-  try {
-    const url = new URL(rawUrl);
-    if (!url.searchParams.has('_from')) {
-      url.searchParams.set('_from', ACQUISITION_SOURCE);
-    }
-    return url.toString();
-  } catch {
-    return rawUrl;
-  }
-}
 const WORKSPACE_PREVIEW_BODY_BYTES = 1_000_000;
 const WORKSPACES = new Map();
 const WORKSPACE_REMOVALS = new Map();
@@ -726,13 +713,14 @@ export async function getPublicTemplateDetail(name, { signal } = {}) {
 }
 
 function commandEnvironment() {
+  const env = { ...process.env, TIANA_FROM: 'dsh' };
   const temp = join(dshHome(), 'tiana-plugin', 'tmp');
   try {
     mkdirSync(temp, { recursive: true });
   } catch {
-    return { ...process.env };
+    return env;
   }
-  return { ...process.env, TMPDIR: temp, TMP: temp, TEMP: temp };
+  return { ...env, TMPDIR: temp, TMP: temp, TEMP: temp };
 }
 
 async function sandboxCapability() {
@@ -2634,7 +2622,7 @@ function normalizeLogin(result) {
       : result.exitCode === 0 ? 'succeeded' : 'failed',
     pending: data.pending_auth === true || result.status === 'pending',
     loggedIn: data.logged_in === true,
-    verificationUri: typeof data.verification_uri === 'string' ? withAcquisitionSource(data.verification_uri) : null,
+    verificationUri: typeof data.verification_uri === 'string' ? data.verification_uri : null,
     expiresAt: data.expires_at ?? null,
     retryAfter: typeof data.retry_after === 'number' ? data.retry_after : 2,
     error: normalizeError(result.error) ?? null,
