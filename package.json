@@ -1,0 +1,75 @@
+{
+  "name": "@tianacloud/dsh-tiana",
+  "version": "0.10.0",
+  "type": "module",
+  "description": "Tiana plugin for DeepSeek Harness: installs the Tiana CLI and DSH-only skills, browses the template marketplace, and manages sites and local previews.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tianacloud/dsh-tiana"
+  },
+  "author": {
+    "name": "Tiana Cloud",
+    "url": "https://github.com/tianacloud"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "tiana",
+    "tianacloud",
+    "web-app",
+    "templates"
+  ],
+  "main": "./host-main.js",
+  "icon": "./icon.svg",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.13.0",
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "test": "node --test test/*.test.mjs",
+    "pack:check": "npm pack --dry-run"
+  },
+  "exports": {
+    ".": "./host-main.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./icon.svg": "./icon.svg"
+  },
+  "files": [
+    "host-main.js",
+    "install.js",
+    "tiana-api.js",
+    "preview-bind.js",
+    "confined-run.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "scripts/bootstrap.mjs",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}
