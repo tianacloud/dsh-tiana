@@ -2,32 +2,34 @@
 
 [简体中文](README.md) | English
 
-Browse app templates, develop local projects, and manage your Tiana sites in DeepSeek Harness (DSH).
+Start from a Tiana app template in DeepSeek Harness (DSH), customize it through conversation, preview your changes, and manage your live sites.
 
-## Features
+## Installation
 
-- **Discover templates**: Search, preview, and clone apps into local projects.
-- **Build through conversation**: Open a project conversation and describe the changes you want.
-- **Preview locally**: Start a preview, see changes update automatically, and stop it whenever you like.
-- **Manage sites and spaces**: Sign in to view, open, and manage your apps or switch Tiana spaces.
-- **Ready-to-use tools**: Activating the plugin prepares the Tiana CLI and official Skills.
+Requires DSH 0.2.2-rc.1 or later and Node.js 22.13 or later.
 
-## Install
-
-Requires Node.js 22.13+ and DSH 0.2.2-rc.1+.
-
-Install `@tianacloud/dsh-tiana` through the DSH plugin manager, or run:
+Install `@tianacloud/dsh-tiana` in the DSH plugin manager, or run:
 
 ```sh
 dsh plugin --profile web add @tianacloud/dsh-tiana@latest
 ```
 
-Replace `web` with your actual profile name.
+If your DSH profile has a different name, replace `web` with that name. Once installed, open **Tiana** from the DSH sidebar.
 
-## Get started
+## Usage
 
-1. Open **Tiana** in the DSH sidebar and browse the template marketplace.
-2. Clone a template, then open its preview or project conversation to customize it.
-3. Sign in and use **My Sites** to view apps, open their management pages, or switch spaces. Browser authorization opens automatically when needed, and pending sign-in can be cancelled.
+### Start from a template
+
+Browse, search, and preview Tiana app templates. Clone a template locally to get a project you can customize.
+
+### Make changes through conversation
+
+Open a conversation for your local project and tell DSH which pages or features you want to change. Start a local preview to see the results as you work.
+
+### Manage your live sites
+
+Sign in to Tiana and open **My Sites** to view your deployed apps, visit them, or open their management pages. Switch spaces to see the sites in each space.
+
+## License
 
 [Apache-2.0](LICENSE)
