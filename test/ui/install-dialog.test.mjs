@@ -192,16 +192,17 @@ test('local projects refresh automatically when missing directories hide and ret
   await screenshot(page,'local-directory-restored');
 });
 
-test('template preview dialog fetches HTML from same origin and renders inside sandboxed srcDoc iframe', async t => {
+test('template preview dialog uses iframe src locally and falls back to sandboxed srcDoc under remote transport', async t => {
   let previewRequest;
-  const { page } = await setup(t, async (url, route) => {
+  const mockHandler = async (url, route) => {
     if (url.pathname.endsWith('/templates')) {
       return {
         items: [{
           name: 'tpl-preview-demo',
           display_name: '预览示例',
           description: '沙箱预览测试',
-          current_version: { version: '3', installable: true, has_source: true },
+          version: '3',
+          enabled: true,
         }],
         categories: [],
         nextCursor: null,
@@ -215,7 +216,8 @@ test('template preview dialog fetches HTML from same origin and renders inside s
           name: 'tpl-preview-demo',
           display_name: '预览示例',
           description: '沙箱预览测试',
-          current_version: { version: '3', installable: true, has_source: true },
+          version: '3',
+          enabled: true,
           prompt: 'Customize this template.',
         },
         error: null,
@@ -226,27 +228,55 @@ test('template preview dialog fetches HTML from same origin and renders inside s
       await route.fulfill({
         status: 200,
         contentType: 'text/html; charset=utf-8',
+        headers: {
+          'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'",
+        },
         body: '<!doctype html><html><head><title>Preview</title></head><body><div id="preview-ok">sandbox preview ok</div><script>document.getElementById("preview-ok").dataset.ran="yes";</script></body></html>',
       });
       return false;
     }
+  };
+
+  // 1. Local DSH mode: uses native iframe src directly
+  const { page: localPage } = await setup(t, mockHandler);
+  await localPage.goto(origin);
+  await localPage.getByRole('button', { name: '预览', exact: true }).click();
+  const localDialog = localPage.getByRole('dialog');
+  const localIframe = localDialog.locator('iframe.tiana-preview-frame');
+  await localIframe.waitFor();
+  assert.equal(previewRequest.resourceType(), 'document');
+  assert.equal(await localIframe.getAttribute('sandbox'), 'allow-scripts');
+  assert.equal(await localIframe.getAttribute('src'), '/api/tiana/template-preview?name=tpl-preview-demo&v=3');
+  assert.equal(await localIframe.getAttribute('srcdoc'), null);
+  assert.equal(await localDialog.locator('.tiana-preview-remote-note').count(), 0);
+  const localFrameEl = localDialog.frameLocator('iframe.tiana-preview-frame').locator('#preview-ok');
+  await localFrameEl.waitFor();
+  assert.equal(await localFrameEl.textContent(), 'sandbox preview ok');
+  assert.equal(await localFrameEl.getAttribute('data-ran'), 'yes');
+  await screenshot(localPage, 'template-preview-local');
+
+  // 2. Remote transport mode: fetches HTML over tunnel and renders sandboxed srcDoc with notice
+  previewRequest = undefined;
+  const { page: remotePage } = await setup(t, mockHandler);
+  await remotePage.addInitScript(() => {
+    window.__DSH_TRANSPORT__ = {};
   });
-  await page.goto(origin);
-  await page.getByRole('button', { name: '预览', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  const iframe = dialog.locator('iframe.tiana-preview-frame');
-  await iframe.waitFor();
+  await remotePage.goto(origin);
+  await remotePage.getByRole('button', { name: '预览', exact: true }).click();
+  const remoteDialog = remotePage.getByRole('dialog');
+  const remoteIframe = remoteDialog.locator('iframe.tiana-preview-frame');
+  await remoteIframe.waitFor();
   assert.equal(previewRequest.resourceType(), 'fetch');
   assert.equal(Object.keys(previewRequest.headers()).some(name => name.startsWith('x-tiana-')), false);
-  assert.equal(await iframe.getAttribute('sandbox'), 'allow-scripts');
-  assert.equal(await iframe.getAttribute('src'), null);
-  const srcdoc = await iframe.getAttribute('srcdoc');
+  assert.equal(await remoteIframe.getAttribute('sandbox'), 'allow-scripts');
+  assert.equal(await remoteIframe.getAttribute('src'), null);
+  const srcdoc = await remoteIframe.getAttribute('srcdoc');
   assert.match(srcdoc ?? '', /http-equiv="Content-Security-Policy"/i);
-  const frameEl = dialog.frameLocator('iframe.tiana-preview-frame').locator('#preview-ok');
-  await frameEl.waitFor();
-  assert.equal(await frameEl.textContent(), 'sandbox preview ok');
-  assert.equal(await frameEl.getAttribute('data-ran'), 'yes');
-  await screenshot(page, 'template-preview-fetch');
+  await remoteDialog.locator('.tiana-preview-remote-note').waitFor();
+  const remoteFrameEl = remoteDialog.frameLocator('iframe.tiana-preview-frame').locator('#preview-ok');
+  await remoteFrameEl.waitFor();
+  assert.equal(await remoteFrameEl.textContent(), 'sandbox preview ok');
+  await screenshot(remotePage, 'template-preview-fetch');
 });
 
 test('site icons and template and workspace covers render via Fetch-only transport', async t => {

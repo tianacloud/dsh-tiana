@@ -157,6 +157,7 @@ window.__ModuleLoader__.load({
       'templates.retryMore': 'Retry',
       'templates.allLoaded': 'Last page',
       'templates.previewUnavailable': 'Preview is unavailable for this template.',
+      'templates.previewRemoteHint': 'Remote mode shows a static preview (site CSP blocks preview scripts). Install or open locally for full interactivity.',
       'templates.copyPrompt': 'Copy prompt',
       'templates.copiedPrompt': 'Prompt copied',
       'templates.promptCopyFailed': 'Automatic copy failed. Select the prompt below and copy it manually.',
@@ -350,6 +351,7 @@ window.__ModuleLoader__.load({
       'templates.retryMore': '重试',
       'templates.allLoaded': '已到最后一页',
       'templates.previewUnavailable': '此模板暂不可预览。',
+      'templates.previewRemoteHint': '远程模式仅展示静态预览（受站点安全策略限制不运行预览脚本）；完整交互请安装或本地打开。',
       'templates.copyPrompt': '复刻提示词',
       'templates.copiedPrompt': '提示词已复刻',
       'templates.promptCopyFailed': '自动复制失败，请选择下方提示词手动复刻。',
@@ -1497,6 +1499,12 @@ window.__ModuleLoader__.load({
       return `<!doctype html><head><meta http-equiv="Content-Security-Policy" content="${PREVIEW_SRCDOC_CSP}"></head>${html}`;
     }
 
+    function isRemoteTransport() {
+      return typeof globalThis !== 'undefined'
+        && typeof globalThis.__DSH_TRANSPORT__ === 'object'
+        && globalThis.__DSH_TRANSPORT__ !== null;
+    }
+
     function TemplateDetailDialog({ t, template, loading, error, onClose, onRetry, onInstall, prompt }) {
       const title = template?.title || t('templates.detail');
       const [copied, setCopied] = React.useState(false);
@@ -1519,10 +1527,11 @@ window.__ModuleLoader__.load({
         if (template.version) params.set('v', template.version);
         return `/api/tiana/template-preview?${params.toString()}`;
       }, [template?.id, template?.version, template?.enabled]);
+      const remotePreview = isRemoteTransport();
       const [previewState, setPreviewState] = React.useState({ status: 'idle', html: '' });
 
       React.useEffect(() => {
-        if (!previewUrl) {
+        if (!previewUrl || !remotePreview) {
           setPreviewState({ status: 'idle', html: '' });
           return undefined;
         }
@@ -1545,7 +1554,7 @@ window.__ModuleLoader__.load({
             setPreviewState({ status: 'error', html: '' });
           });
         return () => controller.abort();
-      }, [previewUrl]);
+      }, [previewUrl, remotePreview]);
 
       return h(
         'div',
@@ -1583,27 +1592,40 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'tiana-dialog-preview' },
                   template.enabled
-                    ? previewState.status === 'ready'
+                    ? !remotePreview
                       ? h('iframe', {
                           className: 'tiana-preview-frame',
-                          srcDoc: previewState.html,
+                          src: previewUrl,
                           title: `${title} ${t('templates.preview')}`,
                           sandbox: 'allow-scripts',
                           referrerPolicy: 'no-referrer',
                         })
-                      : previewState.status === 'error'
+                      : previewState.status === 'ready'
                         ? h(
-                            'div',
-                            { className: 'tiana-state' },
-                            h('div', { className: 'tiana-empty-icon' }, h(Icon, { name: 'spark', size: 18 })),
-                            h('div', { className: 'tiana-state-title' }, t('templates.previewUnavailable')),
+                            React.Fragment,
+                            null,
+                            h('iframe', {
+                              className: 'tiana-preview-frame',
+                              srcDoc: previewState.html,
+                              title: `${title} ${t('templates.preview')}`,
+                              sandbox: 'allow-scripts',
+                              referrerPolicy: 'no-referrer',
+                            }),
+                            h('div', { className: 'tiana-preview-remote-note', role: 'status' }, t('templates.previewRemoteHint')),
                           )
-                        : h(
-                            'div',
-                            { className: 'tiana-state' },
-                            h(Spinner, null),
-                            h('div', { className: 'tiana-state-title' }, t('templates.loading')),
-                          )
+                        : previewState.status === 'error'
+                          ? h(
+                              'div',
+                              { className: 'tiana-state' },
+                              h('div', { className: 'tiana-empty-icon' }, h(Icon, { name: 'spark', size: 18 })),
+                              h('div', { className: 'tiana-state-title' }, t('templates.previewUnavailable')),
+                            )
+                          : h(
+                              'div',
+                              { className: 'tiana-state' },
+                              h(Spinner, null),
+                              h('div', { className: 'tiana-state-title' }, t('templates.loading')),
+                            )
                     : h(
                         'div',
                         { className: 'tiana-state' },
@@ -4659,10 +4681,16 @@ window.__ModuleLoader__.load({
         box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
       }
       .tiana-dialog-preview {
+        display: flex; flex-direction: column;
         min-width: 0; min-height: 0; background: #fff;
         border-right: 1px solid var(--dsw-alias-border-l1);
       }
-      .tiana-preview-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+      .tiana-preview-frame { display: block; flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: #fff; }
+      .tiana-preview-remote-note {
+        flex: none; padding: 8px 14px; font-size: 11px; line-height: 16px;
+        color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-2);
+        border-top: 1px solid var(--dsw-alias-border-l1);
+      }
       .tiana-dialog-info {
         min-width: 0; min-height: 0; overflow: auto; padding: 24px;
         display: flex; flex-direction: column; gap: 12px;
