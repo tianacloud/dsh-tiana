@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -22,7 +23,7 @@ test('package.json is configured for public npm and DSH bundle distribution', as
   assert.equal(pkg.main, './host-main.js');
   assert.equal(pkg.icon, './icon.svg');
   assert.ok(pkg.engines?.node);
-  assert.ok(pkg.engines?.dsh);
+  assert.equal(pkg.engines?.dsh, '>=0.2.2-rc.1');
 
   assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml');
   assert.equal(pkg.dsh?.client?.platform, 'web');
@@ -93,123 +94,148 @@ test('shipped documentation and source files contain no hardcoded local develope
   }
 });
 
-test('tiana-api routes enforce DSH connection.requestRejection on every route and accept HTTPS Origin behind HTTP reverse proxy', async () => {
-  const { registerTianaRoutes } = await import('../tiana-api.js');
+function captureFetchRoutes() {
   const routes = new Map();
-  const webServer = {
-    register(spec) {
-      routes.set(`${spec.kind}:${spec.path}`, spec.handler);
-      return () => routes.delete(`${spec.kind}:${spec.path}`);
-    },
-  };
-
-  assert.throws(
-    () => registerTianaRoutes(webServer, {}),
-    /connection/i,
-    'registerTianaRoutes must fail closed without a DSH connection service',
-  );
-
-  let rejectionStatus;
-  const checkedPaths = [];
   const connection = {
-    requestRejection(req) {
-      checkedPaths.push(req.url);
-      return rejectionStatus;
+    fetch: {
+      register(route) {
+        assert.ok(!routes.has(route.path), route.path);
+        routes.set(route.path, route);
+        return async () => { routes.delete(route.path); };
+      },
     },
   };
-  const dispose = registerTianaRoutes(webServer, { connection });
-  try {
-    const call = (path, { method = 'GET', headers = {} } = {}) => new Promise((resolve) => {
-      let status = 0;
-      let body = '';
-      const req = {
-        method,
-        url: path,
-        headers,
-        socket: { encrypted: false },
-        on() {},
-        off() {},
-        resume() {},
-      };
-      const res = {
-        on() {},
-        off() {},
-        writableEnded: false,
-        writeHead(code) { status = code; },
-        end(chunk = '') {
-          this.writableEnded = true;
-          body += chunk;
-          resolve({ status, rawBody: body, body: body ? JSON.parse(body) : null });
-        },
-      };
-      routes.get(`exact:${path.split('?')[0]}`)(req, res);
-    });
+  const call = (path, options) => {
+    const url = new URL(path, 'http://dsh.internal');
+    return routes.get(url.pathname).fetch(new Request(url, options));
+  };
+  return { connection, routes, call };
+}
 
-    assert.ok(routes.size >= 21, `expected all Tiana HTTP routes to be registered, got ${routes.size}`);
+test('Tiana registers exactly its 21 routes as buffered Fetch handlers on the DSH API channel', async () => {
+  const { registerTianaRoutes } = await import('../tiana-api.js');
+  assert.throws(() => registerTianaRoutes({ requestRejection() {} }), /connection\.fetch\.register/);
 
-    // Every registered route (JSON API + cover/preview/site-icon) must reject 401 and 403 first.
-    for (const [key] of routes) {
-      const path = key.replace(/^exact:/, '');
-      for (const expectedStatus of [401, 403]) {
-        rejectionStatus = expectedStatus;
-        const refused = await call(path, {
-          method: 'GET',
-          headers: {
-            'x-tiana-plugin': '1',
-            host: '127.0.0.1:3080',
-            origin: 'http://127.0.0.1:3080',
-            'sec-fetch-site': 'same-origin',
-          },
-        });
-        assert.equal(refused.status, expectedStatus, `${path} should return ${expectedStatus} when connection rejects`);
-        assert.equal(refused.body?.ok, false);
-        assert.equal(refused.body?.error?.code, expectedStatus === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN');
-      }
+  const { connection, routes, call } = captureFetchRoutes();
+  const dispose = registerTianaRoutes(connection);
+  const paths = {
+    GET: [
+      'status', 'spaces', 'sites', 'templates', 'workspaces', 'workspaces/status',
+      'workspaces/for-session', 'template-detail', 'template-cover', 'template-preview', 'site-icon',
+    ],
+    POST: [
+      'login/start', 'login/resume', 'spaces/switch', 'logout', 'templates/clone',
+      'workspaces/prepare', 'workspaces/remove', 'workspaces/stop', 'workspaces/session', 'sites/delete',
+    ],
+  };
+  assert.equal(routes.size, 21);
+  for (const [method, names] of Object.entries(paths)) {
+    for (const name of names) {
+      const route = routes.get(`/api/tiana/${name}`);
+      assert.deepEqual(route.methods, method === 'GET' ? ['GET', 'HEAD'] : ['POST'], name);
+      assert.equal(route.requestBody, 'buffered', name);
+      assert.equal(typeof route.fetch, 'function', name);
     }
+  }
 
-    // HEAD rejection must not emit a response body.
-    rejectionStatus = 401;
-    const refusedHead = await call('/tiana/api/template-preview?name=demo', {
-      method: 'HEAD',
-      headers: { host: '127.0.0.1:3080' },
-    });
-    assert.equal(refusedHead.status, 401);
-    assert.equal(refusedHead.rawBody, '');
+  const response = await call('/api/tiana/templates?category=invalid', {
+    headers: { host: 'dsh.example.com', origin: 'https://dsh.example.com', 'sec-fetch-site': 'same-origin' },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal((await response.json()).error.code, 'INVALID_CATEGORY');
 
-    // Admitted requests still enforce same-origin checks and work behind HTTPS reverse proxies.
-    rejectionStatus = undefined;
-    const okProxy = await call('/tiana/api/workspaces', {
-      headers: {
-        'x-tiana-plugin': '1',
-        host: 'dsh.example.com',
-        origin: 'https://dsh.example.com',
-        'sec-fetch-site': 'same-origin',
-      },
-    });
-    assert.equal(okProxy.status, 200);
-    assert.equal(okProxy.body.ok, true);
+  const head = await call('/api/tiana/templates?category=invalid', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.deepEqual([...head.headers], [...response.headers]);
+  assert.equal(head.body, null);
+  await dispose();
+  assert.equal(routes.size, 0);
+});
 
-    const mismatch = await call('/tiana/api/workspaces', {
-      headers: {
-        'x-tiana-plugin': '1',
-        host: 'dsh.example.com',
-        origin: 'https://evil.example.com',
-        'sec-fetch-site': 'same-origin',
-      },
-    });
-    assert.equal(mismatch.status, 403);
-    assert.ok(checkedPaths.includes('/tiana/api/workspaces'));
-    assert.ok(checkedPaths.includes('/tiana/api/template-cover'));
-    assert.ok(checkedPaths.includes('/tiana/api/template-preview'));
-    assert.ok(checkedPaths.includes('/tiana/api/site-icon'));
-  } finally {
-    dispose();
+test('media Fetch routes preserve bytes and security headers and omit all HEAD bodies', async (t) => {
+  const { registerTianaRoutes } = await import('../tiana-api.js');
+  const root = await mkdtemp(join(tmpdir(), 'tiana-fetch-media-'));
+  const marketplace = 'https://market.example.test';
+  const configHome = process.env.XDG_CONFIG_HOME;
+  const apiOrigin = process.env.TIANA_API_ORIGIN;
+  process.env.XDG_CONFIG_HOME = root;
+  process.env.TIANA_API_ORIGIN = marketplace;
+  t.after(async () => {
+    if (configHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = configHome;
+    if (apiOrigin === undefined) delete process.env.TIANA_API_ORIGIN;
+    else process.env.TIANA_API_ORIGIN = apiOrigin;
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, 'tiana'));
+  await writeFile(join(root, 'tiana', 'credentials.json'), JSON.stringify({
+    credentials: { [marketplace]: { access_token: 'fixture-token', expires_at: '2099-01-01T00:00:00Z' } },
+  }), { mode: 0o600 });
+
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const html = Buffer.from('<h1>预览</h1>');
+  const upstream = t.mock.method(globalThis, 'fetch', async (url) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/preview')) return new Response(html, { headers: { 'content-type': 'text/html' } });
+    return new Response(image, { headers: { 'content-type': 'image/png' } });
+  });
+  const { connection, call } = captureFetchRoutes();
+  t.after(registerTianaRoutes(connection));
+  const resources = [
+    { path: 'site-icon?id=web123', upstreamPath: '/api/v1/web-apps/web123/icon', contentType: 'image/png', bytes: image, maxAge: 300 },
+    { path: 'template-cover?name=demo&v=7', upstreamPath: '/api/v1/template-catalog/demo/cover?channel=market&version=7', contentType: 'image/png', bytes: image, maxAge: 86400 },
+    { path: 'template-preview?name=demo&v=7', upstreamPath: '/api/v1/template-catalog/demo/preview?channel=market&version=7', contentType: 'text/html; charset=utf-8', bytes: html, maxAge: 86400 },
+  ];
+  for (const { path, upstreamPath, contentType, bytes, maxAge } of resources) {
+    const response = await call(`/api/tiana/${path}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    assert.equal(response.headers.get('content-type'), contentType);
+    assert.equal(response.headers.get('content-length'), String(bytes.length));
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(response.headers.get('cross-origin-resource-policy'), 'same-origin');
+    assert.equal(response.headers.get('cache-control'), `private, max-age=${maxAge}`);
+    assert.match(response.headers.get('content-security-policy'), /^sandbox\b/);
+    assert.equal(upstream.mock.calls.at(-1).arguments[0], marketplace + upstreamPath);
+
+    const head = await call(`/api/tiana/${path}`, { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(head.body, null);
+    assert.deepEqual([...head.headers], [...response.headers]);
+  }
+  for (const path of ['site-icon', 'template-cover', 'template-preview']) {
+    const invalid = await call(`/api/tiana/${path}`, { method: 'HEAD' });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body, null);
   }
 });
 
-test('host-main injects both webServer and connection before mounting routes', async (t) => {
-  const { mkdtemp, rm } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
+test('media upstream fetches abort when their DSH request is cancelled', async (t) => {
+  const { registerTianaRoutes } = await import('../tiana-api.js');
+  const { connection, call } = captureFetchRoutes();
+  t.after(registerTianaRoutes(connection));
+  const upstreamStarted = Promise.withResolvers();
+  t.mock.method(globalThis, 'fetch', async (_url, { signal }) => {
+    upstreamStarted.resolve(signal);
+    return new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  });
+
+  const controller = new AbortController();
+  const pending = call('/api/tiana/template-cover?name=demo', { signal: controller.signal });
+  const upstreamSignal = await upstreamStarted.promise;
+  controller.abort();
+  assert.equal(upstreamSignal.aborted, true);
+  const response = await pending;
+  assert.equal(response.status, 499);
+  assert.equal(response.body, null);
+});
+
+test('host-main mounts and disposes routes with only the connection service', async (t) => {
   const previousHome = process.env.DSH_HOME;
   const tempHome = await mkdtemp(join(tmpdir(), 'tiana-host-main-'));
   process.env.DSH_HOME = tempHome;
@@ -220,67 +246,32 @@ test('host-main injects both webServer and connection before mounting routes', a
   });
 
   const { apply } = await import('../host-main.js');
+  const { connection, routes } = captureFetchRoutes();
   const injectedDeps = [];
-  const registered = [];
   const effects = [];
-  const webServer = {
-    register(spec) {
-      registered.push(spec.path);
-      return () => {};
-    },
-  };
-  const connection = {
-    requestRejection() { return undefined; },
-  };
+  const messages = [];
   const ctx = {
-    logger: { info() {}, error() {} },
-    get(name) {
-      if (name === 'webServer') return webServer;
-      if (name === 'connection') return connection;
-      return undefined;
-    },
+    logger: { info(message) { messages.push(message); }, error() {} },
+    get: name => name === 'connection' ? connection : undefined,
     effect(fn, label) {
-      if (label === 'tiana:http-routes') {
-        const dispose = fn();
-        effects.push(dispose);
-      }
+      if (label === 'tiana:http-routes') effects.push(fn());
     },
     inject(deps, cb) {
       injectedDeps.push(deps);
-      cb({
-        webServer,
-        connection,
-        get: (name) => ctx.get(name),
-        effect: (fn, label) => ctx.effect(fn, label),
-      });
+      cb({ ...ctx, connection });
     },
   };
 
   apply(ctx);
-  try {
-    assert.deepEqual(injectedDeps, [['webServer', 'connection']]);
-    assert.ok(registered.includes('/tiana/api/workspaces'));
-    assert.ok(registered.includes('/tiana/api/template-preview'));
-  } finally {
-    for (const dispose of effects) dispose?.();
-  }
+  assert.deepEqual(injectedDeps, [['connection']]);
+  assert.equal(routes.size, 21);
+  const diagnostics = JSON.parse(await readFile(join(tempHome, 'tiana-plugin/host-loaded.json'), 'utf8'));
+  assert.equal(diagnostics.webServer, false);
+  assert.equal(diagnostics.routesMounted, true);
+  for (const dispose of effects) await dispose();
+  assert.equal(routes.size, 0);
 
-  // Without ctx.inject and without connection, routes must stay disabled.
-  const fallbackRegistered = [];
-  apply({
-    logger: { info() {}, error() {} },
-    get(name) {
-      if (name === 'webServer') {
-        return {
-          register(spec) {
-            fallbackRegistered.push(spec.path);
-            return () => {};
-          },
-        };
-      }
-      return undefined;
-    },
-    effect() {},
-  });
-  assert.deepEqual(fallbackRegistered, []);
+  apply({ ...ctx, inject: undefined, get: () => ({ requestRejection() {} }) });
+  assert.equal(routes.size, 0);
+  assert.ok(messages.some(message => message.includes('connection.fetch.register is unavailable')));
 });

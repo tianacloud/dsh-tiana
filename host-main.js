@@ -56,28 +56,28 @@ export function apply(ctx) {
 
   writeHostDiagnostics(ctx);
 
-  const mountRoutes = (webCtx, webServer, connection) => {
-    writeHostDiagnostics(webCtx, { routesMounted: true });
-    webCtx.effect(() => registerTianaRoutes(webServer, {
-      connection,
-      resolveWorkspaceRegistry: () => webCtx.get('workspaceRegistry') ?? ctx.get('workspaceRegistry'),
-      resolveSessionController: () => webCtx.get('sessionController') ?? ctx.get('sessionController'),
-      resolveSandbox: () => webCtx.get('sandbox') ?? ctx.get('sandbox'),
-    }), 'tiana:http-routes');
+  const mountRoutes = (connectionCtx, connection) => {
+    if (typeof connection?.fetch?.register !== 'function') {
+      ctx.logger.info('[tiana] DSH connection.fetch.register is unavailable; panel API routes stay disabled');
+      return;
+    }
+    connectionCtx.effect(() => {
+      const dispose = registerTianaRoutes(connection, {
+        resolveWorkspaceRegistry: () => connectionCtx.get('workspaceRegistry') ?? ctx.get('workspaceRegistry'),
+        resolveSessionController: () => connectionCtx.get('sessionController') ?? ctx.get('sessionController'),
+        resolveSandbox: () => connectionCtx.get('sandbox') ?? ctx.get('sandbox'),
+      });
+      writeHostDiagnostics(connectionCtx, { routesMounted: true });
+      return dispose;
+    }, 'tiana:http-routes');
   };
 
   if (typeof ctx.inject === 'function') {
-    ctx.inject(['webServer', 'connection'], (webCtx) => {
-      mountRoutes(webCtx, webCtx.webServer, webCtx.connection);
+    ctx.inject(['connection'], (connectionCtx) => {
+      mountRoutes(connectionCtx, connectionCtx.connection);
     });
   } else {
-    const webServer = ctx.get('webServer');
-    const connection = ctx.get('connection');
-    if (webServer === undefined || connection === undefined) {
-      ctx.logger.info('[tiana] web server or connection service unavailable; panel API routes stay disabled');
-    } else {
-      mountRoutes(ctx, webServer, connection);
-    }
+    mountRoutes(ctx, ctx.get('connection'));
   }
 
   ctx.effect(() => {

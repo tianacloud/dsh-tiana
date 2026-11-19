@@ -45,7 +45,7 @@ async function setup(t, handler) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  await page.route('**/tiana/api/**', async route => {
+  await page.route('**/api/tiana/**', async route => {
     const url = new URL(route.request().url());
     calls.push(url.pathname + url.search);
     let value = await handler(url, route);
@@ -114,7 +114,7 @@ test('sites replace each page, search remotely, preserve errors and ignore late 
   await page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === 'old');
   assert.equal(await page.getByText('old', { exact: true }).count(), 0);
   assert.equal(calls.some(c => c.includes('/sites?page=1&q=new')), true);
-  assert.equal(calls.filter(c => c.startsWith('/tiana/api/templates')).length, 0);
+  assert.equal(calls.filter(c => c.startsWith('/api/tiana/templates')).length, 0);
   await screenshot(page, 'sites-search');
 });
 
@@ -160,12 +160,12 @@ test('sites deduplicate clicks and discard pages from a previous space or logged
   await page.goto(`${origin}/?section=sites`);
   await page.getByText('ten-a 1-0', { exact: true }).waitFor();
   const next = page.getByRole('button', { name: '下一页', exact: true });
-  const before = calls.filter(c => c === '/tiana/api/sites?page=2').length;
+  const before = calls.filter(c => c === '/api/tiana/sites?page=2').length;
   const page2Request = page.waitForRequest(r => r.url().endsWith('/sites?page=2'));
   await next.evaluate(button => { button.click(); button.click(); });
   await page2Request;
   assert.equal(await next.isDisabled(), true);
-  assert.equal(calls.filter(c => c === '/tiana/api/sites?page=2').length, before + 1);
+  assert.equal(calls.filter(c => c === '/api/tiana/sites?page=2').length, before + 1);
   await page.getByRole('button', { name: '切换空间', exact: true }).click();
   await page.getByRole('option', { name: '空间 b', exact: true }).click();
   await page.getByText('ten-b 1-0', { exact: true }).waitFor();
@@ -238,6 +238,7 @@ test('local preview defaults to sandbox, opens a tab after build, stops, and res
   finishBuild();
   const popup=await popupPromise; t.after(()=>popup.close());
   await popup.waitForURL(origin + '/preview-fixture');
+  assert.ok(calls.includes('/api/tiana/workspaces/prepare?id=local-test&lang=zh'));
   assert.equal(calls.some(c=>c.includes('/prepare?') && c.includes('sandbox=off')),false);
   await page.getByRole('button',{name:'停止预览',exact:true}).waitFor();
   const actionBoxes=await page.locator('.tiana-local-actions button,.tiana-local-actions a').evaluateAll(items=>items.map(el=>{const r=el.getBoundingClientRect();return {y:r.y,height:r.height}}));

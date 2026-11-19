@@ -7,7 +7,7 @@
  * - the public Tiana marketplace gallery, with sandboxed previews, local
  *   clone-and-build, and a link to the hosted install flow.
  *
- * All data comes from the same-origin `/tiana/api/*` routes served by the Host
+ * All data comes from the same-origin `/api/tiana/*` routes served by the Host
  * half (`tiana-api.js`); this module never talks to Tiana directly.
  */
 window.__ModuleLoader__.load({
@@ -604,16 +604,18 @@ window.__ModuleLoader__.load({
       };
     }
 
+    const localizedTianaRoutes = new Set([
+      '/api/tiana/templates/clone',
+      '/api/tiana/workspaces/prepare',
+      '/api/tiana/workspaces/session',
+    ]);
+
     async function tianaFetch(path, options = {}) {
-      const response = await fetch(path, {
-        ...options,
-        cache: 'no-store',
-        headers: {
-          'x-tiana-plugin': '1',
-          'x-tiana-locale': getActiveLocale(),
-          ...(options.headers ?? {}),
-        },
-      });
+      const url = new URL(path, location.href);
+      if (localizedTianaRoutes.has(url.pathname) && !url.searchParams.has('lang')) {
+        url.searchParams.set('lang', getActiveLocale());
+      }
+      const response = await fetch(url.pathname + url.search, { ...options, cache: 'no-store' });
       const text = await response.text();
       let payload = null;
       if (text.length > 0) {
@@ -744,27 +746,77 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function ApiImage({ url, className, fallback }) {
+      const placeholder = React.useRef(null);
+      const [image, setImage] = React.useState(null);
+
+      React.useEffect(() => {
+        if (url === null) return undefined;
+        const controller = new AbortController();
+        let objectUrl = null;
+
+        function release() {
+          controller.abort();
+          if (objectUrl !== null) {
+            URL.revokeObjectURL(objectUrl);
+            objectUrl = null;
+          }
+        }
+
+        async function load() {
+          try {
+            const response = await fetch(url, { signal: controller.signal });
+            if (!response.ok) return;
+            const blob = await response.blob();
+            // Blob URLs do not carry the response's sandbox CSP. Only render raster images.
+            const rasterImage = /^image\/(?:png|jpeg|webp|avif|gif|bmp|x-icon|vnd\.microsoft\.icon)(?:;|$)/i.test(blob.type);
+            if (controller.signal.aborted || !rasterImage) return;
+            objectUrl = URL.createObjectURL(blob);
+            setImage({ src: objectUrl, release });
+          } catch {
+            // Leave the placeholder in place if the fetch or body read fails.
+          }
+        }
+
+        // dsh-remote tunnels fetch(), so defer the fetch itself until the image is near the viewport.
+        const observer = new IntersectionObserver((entries) => {
+          if (!entries.some((entry) => entry.isIntersecting) || controller.signal.aborted) return;
+          observer.disconnect();
+          void load();
+        }, { rootMargin: '200px' });
+        observer.observe(placeholder.current);
+        return () => {
+          observer.disconnect();
+          release();
+        };
+      }, [url]);
+
+      if (image === null) return React.cloneElement(fallback, { ref: placeholder });
+      return h('img', {
+        className,
+        src: image.src,
+        alt: '',
+        decoding: 'async',
+        onError: () => {
+          image.release();
+          setImage(null);
+        },
+      });
+    }
+
     function SiteThumb({ site, large = false }) {
       const accent = ACCENTS[site.accent] ?? ACCENTS.teal;
-      const [failed, setFailed] = React.useState(false);
       const initial = typeof site.title === 'string' && site.title.trim() !== '' ? site.title.trim().slice(0, 1) : 'T';
+      const url = site.id ? `/api/tiana/site-icon?id=${encodeURIComponent(site.id)}` : null;
       return h(
         'div',
-        {
-          className: `tiana-thumb${large ? ' tiana-thumb-large' : ''}${failed ? ' is-fallback' : ''}`,
-          style: failed ? { background: accent.bg } : undefined,
-          'aria-hidden': true,
-        },
-        failed || !site.id
-          ? h('span', { className: 'tiana-site-initial' }, initial)
-          : h('img', {
-              className: 'tiana-site-image',
-              src: `/tiana/api/site-icon?id=${encodeURIComponent(site.id)}`,
-              alt: '',
-              loading: 'lazy',
-              decoding: 'async',
-              onError: () => setFailed(true),
-            }),
+        { className: `tiana-thumb${large ? ' tiana-thumb-large' : ''}`, 'aria-hidden': true },
+        h(ApiImage, {
+          key: url,
+          url,
+          className: 'tiana-site-image',
+          fallback: h('span', { className: 'tiana-site-initial', style: { background: accent.bg } }, initial),
+        }),
       );
     }
 
@@ -795,9 +847,9 @@ window.__ModuleLoader__.load({
 
     function TemplateCover({ template, t, onOpen }) {
       const accent = ACCENTS[template.accent] ?? ACCENTS.teal;
-      const [broken, setBroken] = React.useState(false);
       const params = new URLSearchParams({ name: template.id });
       if (template.version) params.set('v', template.version);
+      const url = template.hasCover ? `/api/tiana/template-cover?${params}` : null;
       return h(
         'button',
         {
@@ -806,24 +858,21 @@ window.__ModuleLoader__.load({
           onClick: onOpen,
           'aria-label': `${t('templates.preview')} ${template.title}`,
         },
-        !broken && template.hasCover
-          ? h('img', {
-              className: 'tiana-template-cover-img',
-              src: `/tiana/api/template-cover?${params.toString()}`,
-              alt: '',
-              loading: 'lazy',
-              onError: () => setBroken(true),
-            })
-          : h(
-              'div',
-              {
-                className: 'tiana-template-cover-fallback',
-                style: { background: accent.bg },
-                role: 'img',
-                'aria-label': t('templates.noCover'),
-              },
-              h('span', { className: 'tiana-template-mark' }, template.title.slice(0, 1)),
-            ),
+        h(ApiImage, {
+          key: url,
+          url,
+          className: 'tiana-template-cover-img',
+          fallback: h(
+            'div',
+            {
+              className: 'tiana-template-cover-fallback',
+              style: { background: accent.bg },
+              role: 'img',
+              'aria-label': t('templates.noCover'),
+            },
+            h('span', { className: 'tiana-template-mark' }, template.title.slice(0, 1)),
+          ),
+        }),
         template.categoryName ? h('span', { className: 'tiana-template-cover-badge' }, template.categoryName) : null,
       );
     }
@@ -1468,7 +1517,7 @@ window.__ModuleLoader__.load({
         const params = new URLSearchParams();
         params.set('name', template.id);
         if (template.version) params.set('v', template.version);
-        return `/tiana/api/template-preview?${params.toString()}`;
+        return `/api/tiana/template-preview?${params.toString()}`;
       }, [template?.id, template?.version, template?.enabled]);
       const [previewState, setPreviewState] = React.useState({ status: 'idle', html: '' });
 
@@ -1483,7 +1532,6 @@ window.__ModuleLoader__.load({
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
-          headers: { 'x-tiana-plugin': '1' },
         })
           .then(async (response) => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1734,7 +1782,7 @@ window.__ModuleLoader__.load({
         setExistingLocal(null);
         setDuplicateMode('idle');
         setDuplicateError(null);
-        void tianaFetch('/tiana/api/workspaces')
+        void tianaFetch('/api/tiana/workspaces')
           .then((payload) => {
             if (cancelled) return;
             setSandboxCapability(payload.sandbox ?? { supported: false, enforcement: null, reason: null });
@@ -1764,7 +1812,7 @@ window.__ModuleLoader__.load({
       const openExisting = async (item) => {
         setDuplicateError(null);
         try {
-          const payload = await tianaFetch(`/tiana/api/workspaces/session?id=${encodeURIComponent(item.id)}`, { method: 'POST' });
+          const payload = await tianaFetch(`/api/tiana/workspaces/session?id=${encodeURIComponent(item.id)}`, { method: 'POST' });
           if (payload.error || !payload.session?.ready || typeof onOpenSession !== 'function' || !onOpenSession(payload.session.sessionId)) {
             throw new Error(payload.error?.message || t('templates.duplicateOpenFailed'));
           }
@@ -1778,7 +1826,7 @@ window.__ModuleLoader__.load({
         if (!aliveRef.current) return;
         try {
           const payload = await tianaFetch(
-            `/tiana/api/workspaces/status?id=${encodeURIComponent(id)}`,
+            `/api/tiana/workspaces/status?id=${encodeURIComponent(id)}`,
           );
           if (!aliveRef.current) return;
           if (payload.error || !payload.workspace) {
@@ -1853,7 +1901,7 @@ window.__ModuleLoader__.load({
           if (customDirectory !== '') params.set('dir', customDirectory);
           if (sandboxCapability?.supported !== true || !sandboxEnabled) params.set('sandbox', 'off');
           const payload = await tianaFetch(
-            `/tiana/api/templates/clone?${params.toString()}`,
+            `/api/tiana/templates/clone?${params.toString()}`,
             { method: 'POST' },
           );
           if (payload.duplicate === true && Array.isArray(payload.existing)) {
@@ -1895,7 +1943,7 @@ window.__ModuleLoader__.load({
           const retryParams = new URLSearchParams({ id: result.workspace.id });
           if (sandboxCapability?.supported !== true || !sandboxEnabled) retryParams.set('sandbox', 'off');
           const payload = await tianaFetch(
-            `/tiana/api/workspaces/prepare?${retryParams.toString()}`,
+            `/api/tiana/workspaces/prepare?${retryParams.toString()}`,
             { method: 'POST' },
           );
           if (payload.ok !== true || payload.error || !payload.workspace) {
@@ -2497,7 +2545,7 @@ window.__ModuleLoader__.load({
         const controller = new AbortController();
         setDetail({ loading: true, item: null, error: null });
         void tianaFetch(
-          `/tiana/api/template-detail?name=${encodeURIComponent(selectedName)}`,
+          `/api/tiana/template-detail?name=${encodeURIComponent(selectedName)}`,
           { signal: controller.signal },
         ).then((payload) => {
           if (controller.signal.aborted) return;
@@ -2691,7 +2739,7 @@ window.__ModuleLoader__.load({
       const requestWorkspace = React.useCallback(async () => {
         if (sessionKey === '') return null;
         const payload = await tianaFetch(
-          `/tiana/api/workspaces/for-session?id=${encodeURIComponent(sessionKey)}`,
+          `/api/tiana/workspaces/for-session?id=${encodeURIComponent(sessionKey)}`,
         );
         if (payload.error) throw new Error(payload.error.message);
         return payload.workspace ?? null;
@@ -2766,7 +2814,7 @@ window.__ModuleLoader__.load({
           const prepParams = new URLSearchParams({ id: workspace.id });
           if (!readSandboxPreference()) prepParams.set('sandbox', 'off');
           const payload = await tianaFetch(
-            `/tiana/api/workspaces/prepare?${prepParams.toString()}`,
+            `/api/tiana/workspaces/prepare?${prepParams.toString()}`,
             { method: 'POST' },
           );
           if (payload.error) throw new Error(payload.error.message);
@@ -2881,7 +2929,7 @@ window.__ModuleLoader__.load({
         setBusyId(workspace.id);
         setActionError(null);
         try {
-          const payload = await tianaFetch(`/tiana/api/workspaces/session?id=${encodeURIComponent(workspace.id)}`, { method: 'POST' });
+          const payload = await tianaFetch(`/api/tiana/workspaces/session?id=${encodeURIComponent(workspace.id)}`, { method: 'POST' });
           if (payload.error || !payload.session?.ready) throw new Error(payload.error?.message || t('templates.sessionFailed'));
           if (typeof onOpenSession !== 'function' || !onOpenSession(payload.session.sessionId)) throw new Error(t('templates.sessionFailed'));
         } catch (cause) {
@@ -2960,7 +3008,7 @@ window.__ModuleLoader__.load({
                       const status = workspace.status ?? 'stopped';
                       const statusLabel = t(`local.status.${status}`);
                       const cover = typeof workspace.template === 'string' && workspace.template.length > 0
-                        ? `/tiana/api/template-cover?name=${encodeURIComponent(workspace.template)}`
+                        ? `/api/tiana/template-cover?name=${encodeURIComponent(workspace.template)}`
                         : null;
                       return h(
                         'article',
@@ -2968,21 +3016,11 @@ window.__ModuleLoader__.load({
                         h(
                           'div',
                           { className: 'tiana-local-thumb', 'aria-hidden': true },
-                          cover === null
-                            ? h('span', { className: 'tiana-local-thumb-fallback' }, workspace.title.slice(0, 1))
-                            : h('img', {
-                                src: cover,
-                                alt: '',
-                                loading: 'lazy',
-                                decoding: 'async',
-                                onError: (event) => {
-                                  const image = event.currentTarget;
-                                  image.style.display = 'none';
-                                  const fallback = image.parentElement?.querySelector('.tiana-local-thumb-fallback');
-                                  if (fallback) fallback.style.display = 'flex';
-                                },
-                              }),
-                          h('span', { className: 'tiana-local-thumb-fallback', style: { display: 'none' } }, workspace.title.slice(0, 1)),
+                          h(ApiImage, {
+                            key: cover,
+                            url: cover,
+                            fallback: h('span', { className: 'tiana-local-thumb-fallback' }, workspace.title.slice(0, 1)),
+                          }),
                         ),
                         h(
                           'div',
@@ -3141,7 +3179,7 @@ window.__ModuleLoader__.load({
         setBusy(false);
         setError(null);
         setOpened(false);
-        void tianaFetch(`/tiana/api/workspaces/status?id=${encodeURIComponent(notice.workspaceId)}`)
+        void tianaFetch(`/api/tiana/workspaces/status?id=${encodeURIComponent(notice.workspaceId)}`)
           .then((payload) => {
             if (!aliveRef.current) return;
             if (payload.error) throw new Error(payload.error.message);
@@ -3161,7 +3199,7 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(async () => {
           try {
             const payload = await tianaFetch(
-              `/tiana/api/workspaces/status?id=${encodeURIComponent(notice.workspaceId)}`,
+              `/api/tiana/workspaces/status?id=${encodeURIComponent(notice.workspaceId)}`,
             );
             if (!aliveRef.current) return;
             if (payload.error) throw new Error(payload.error.message);
@@ -3215,7 +3253,7 @@ window.__ModuleLoader__.load({
           const prepParams = new URLSearchParams({ id: notice.workspaceId });
           if (!readSandboxPreference()) prepParams.set('sandbox', 'off');
           const payload = await tianaFetch(
-            `/tiana/api/workspaces/prepare?${prepParams.toString()}`,
+            `/api/tiana/workspaces/prepare?${prepParams.toString()}`,
             { method: 'POST' },
           );
           if (payload.error || !payload.workspace) {
@@ -3427,7 +3465,7 @@ window.__ModuleLoader__.load({
       const checkStatus = React.useCallback(async () => {
         setAuth({ phase: 'checking', error: null });
         try {
-          const payload = await tianaFetch('/tiana/api/status');
+          const payload = await tianaFetch('/api/tiana/status');
           if (payload.loggedIn === true) {
             setAuth({ phase: 'authenticated', error: null });
             return;
@@ -3454,7 +3492,7 @@ window.__ModuleLoader__.load({
         try {
           const params = new URLSearchParams({ page: String(page) });
           if (siteQuery.trim()) params.set('q', siteQuery.trim());
-          const payload = await tianaFetch(`/tiana/api/sites?${params}`);
+          const payload = await tianaFetch(`/api/tiana/sites?${params}`);
           if (requestId !== siteRequestRef.current) return;
           if (payload.error) throw Object.assign(new Error(payload.error.message), { payload });
           setSitesData({ loading: false, items: (payload.items ?? []).map(mapSite), error: null,
@@ -3472,7 +3510,7 @@ window.__ModuleLoader__.load({
         const requestId = ++localRequestRef.current;
         if (!silent) setLocalData((current) => ({ ...current, loading: true, error: null }));
         try {
-          const payload = await tianaFetch('/tiana/api/workspaces');
+          const payload = await tianaFetch('/api/tiana/workspaces');
           if (requestId !== localRequestRef.current) return;
           if (payload.error) throw new Error(payload.error.message || 'Local projects failed.');
           setLocalData({
@@ -3495,7 +3533,7 @@ window.__ModuleLoader__.load({
         const requestId = ++spacesRequestRef.current;
         setSpacesData((current) => ({ ...current, loading: true, error: null }));
         try {
-          const payload = await tianaFetch('/tiana/api/spaces');
+          const payload = await tianaFetch('/api/tiana/spaces');
           if (requestId !== spacesRequestRef.current) return;
           if (payload.error) {
             throw Object.assign(new Error(payload.error.message || 'Could not load Tiana spaces.'), { payload });
@@ -3532,14 +3570,14 @@ window.__ModuleLoader__.load({
         try {
           // Browser approval may already have selected the requested space.
           if (afterLogin) {
-            const current = await tianaFetch('/tiana/api/spaces');
+            const current = await tianaFetch('/api/tiana/spaces');
             if (current.ok === true && !current.error && current.currentTenantId === tenantId) {
               await loadSpaces();
               return true;
             }
           }
           const payload = await tianaFetch(
-            `/tiana/api/spaces/switch?id=${encodeURIComponent(tenantId)}`,
+            `/api/tiana/spaces/switch?id=${encodeURIComponent(tenantId)}`,
             { method: 'POST' },
           );
           if (payload.ok !== true || payload.error) {
@@ -3610,7 +3648,7 @@ window.__ModuleLoader__.load({
         const params = new URLSearchParams({ id });
         if (sandboxOff) params.set('sandbox', 'off');
         const payload = await tianaFetch(
-          `/tiana/api/workspaces/prepare?${params.toString()}`,
+          `/api/tiana/workspaces/prepare?${params.toString()}`,
           { method: 'POST' },
         );
         if (payload.error || !payload.workspace) {
@@ -3625,7 +3663,7 @@ window.__ModuleLoader__.load({
 
       const deleteSite = React.useCallback(async (site) => {
         const payload = await tianaFetch(
-          `/tiana/api/sites/delete?id=${encodeURIComponent(site.id)}`,
+          `/api/tiana/sites/delete?id=${encodeURIComponent(site.id)}`,
           { method: 'POST' },
         );
         if (payload.ok !== true || payload.error) {
@@ -3670,7 +3708,7 @@ window.__ModuleLoader__.load({
           if (category !== 'all') params.set('category', category);
           if (query) params.set('q', query);
           const payload = await tianaFetch(
-            `/tiana/api/templates${params.size === 0 ? '' : `?${params.toString()}`}`,
+            `/api/tiana/templates${params.size === 0 ? '' : `?${params.toString()}`}`,
           );
           if (requestId !== templateRequestRef.current) return;
           if (payload.error) {
@@ -3857,7 +3895,7 @@ window.__ModuleLoader__.load({
           });
           setAuth({ phase: 'starting', error: null });
           try {
-            const payload = await tianaFetch('/tiana/api/login/start', { method: 'POST' });
+            const payload = await tianaFetch('/api/tiana/login/start', { method: 'POST' });
             if (attempt !== loginAttemptRef.current) return;
             if (payload.loggedIn === true) {
               closeAuthWindow(popup);
@@ -3951,7 +3989,7 @@ window.__ModuleLoader__.load({
 
         const poll = async () => {
           try {
-            const payload = await tianaFetch('/tiana/api/login/resume', { method: 'POST' });
+            const payload = await tianaFetch('/api/tiana/login/resume', { method: 'POST' });
             if (cancelled) return;
             if (payload.loggedIn === true) {
               closeAuthWindow(loginPopupRef.current);
@@ -4030,7 +4068,7 @@ window.__ModuleLoader__.load({
         siteRequestRef.current += 1;
         siteBusyRef.current = false;
         try {
-          await tianaFetch('/tiana/api/logout', { method: 'POST' });
+          await tianaFetch('/api/tiana/logout', { method: 'POST' });
           setAuth({ phase: 'anonymous', error: null });
           setLogin(null);
           setSitesData({ loading: false, items: [], error: null, page: 1, total: 0, totalPages: 0 });
@@ -4120,7 +4158,7 @@ window.__ModuleLoader__.load({
                   onRefresh: () => loadLocalProjects(),
                   onPrepare: prepareLocal,
                   onStop: async id => {
-                    const payload = await tianaFetch(`/tiana/api/workspaces/stop?id=${encodeURIComponent(id)}`, { method: 'POST' });
+                    const payload = await tianaFetch(`/api/tiana/workspaces/stop?id=${encodeURIComponent(id)}`, { method: 'POST' });
                     if (payload.error) throw new Error(payload.error.message);
                     await loadLocalProjects(true);
                   },

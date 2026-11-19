@@ -58,7 +58,7 @@ async function setup(t, handler) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  await page.route('**/tiana/api/**', async route => {
+  await page.route('**/api/tiana/**', async route => {
     const url = new URL(route.request().url());
     calls.push(url.pathname + url.search);
     let value = await handler(url, route);
@@ -93,7 +93,7 @@ for (const count of [0,1,2]) {
     const {page} = await setup(t, async url => {
       if(url.pathname.endsWith('/spaces')) return {ok:true,items:spaces.slice(0,count),currentTenantId:'ten-a',canCreateSpace:count!==2};
     });
-    const loaded = page.waitForResponse(r => r.url().endsWith('/tiana/api/spaces'));
+    const loaded = page.waitForResponse(r => r.url().endsWith('/api/tiana/spaces'));
     await page.goto(origin);
     await page.getByText('已连接 Tiana',{exact:true}).waitFor();
     await loaded;

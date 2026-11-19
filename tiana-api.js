@@ -2,16 +2,14 @@
  * Host-side Tiana account and catalog API for the panel.
  *
  * The browser never runs the Tiana CLI and never sees credentials. It calls
- * same-origin `/tiana/api/*` routes; account/site operations run the installed
+ * same-origin `/api/tiana/*` routes; account/site operations run the installed
  * `tiana` CLI, public marketplace reads fetch the anonymous MGR catalog, and
  * read-only Web APIs (app icons) use only the CLI
  * access token in Host memory. The refresh token is never used, returned or
  * persisted by this module.
  *
- * Every route registered on DSH's `webServer` checks
- * `connection.requestRejection(req)` first (Host/Origin fence plus browser/API
- * authentication), and JSON API routes also enforce the custom
- * `x-tiana-plugin: 1` header as defense in depth.
+ * DSH's shared API channel admits requests and dispatches exact Fetch routes
+ * only for owner peers.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -97,7 +95,7 @@ async function cliAccessToken() {
   return { accessToken: token, expiresAt };
 }
 
-async function fetchSiteIcon(id) {
+async function fetchSiteIcon(id, signal) {
   const now = Date.now();
   const cached = SITE_ICONS.get(id);
   if (cached !== undefined && cached.expiresAt > now) return cached;
@@ -110,7 +108,7 @@ async function fetchSiteIcon(id) {
         accept: 'image/png,image/*',
         authorization: `Bearer ${credential.accessToken}`,
       },
-      signal: AbortSignal.timeout(SITE_ICON_TIMEOUT_MS),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(SITE_ICON_TIMEOUT_MS)]),
       redirect: 'manual',
     });
     if (!response.ok) return null;
@@ -134,56 +132,33 @@ async function fetchSiteIcon(id) {
   }
 }
 
-function createSiteIconHandler(connection) {
-  return async (req, res) => {
-    if (rejectUntrusted(connection, req, res)) return;
-    if (!allowSubresourceRequest(req, res, 'site icon')) return;
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      sendJson(res, 405, {
-        ok: false,
-        error: { code: 'METHOD_NOT_ALLOWED', message: 'Use GET or HEAD.' },
-      }, { allow: 'GET, HEAD' });
-      return;
-    }
-    const parsed = new URL(req.url ?? '/', 'http://localhost');
-    const id = parsed.searchParams.get('id') ?? '';
-    if (!/^[a-z][a-z0-9]{5,31}$/.test(id)) {
-      sendJson(res, 400, {
-        ok: false,
-        error: { code: 'INVALID_WEB_ID', message: 'Invalid Web application id.' },
-      });
-      return;
-    }
-    req.resume();
-    try {
-      const icon = await fetchSiteIcon(id);
-      if (res.writableEnded) return;
-      if (icon === null) {
-        res.writeHead(404, {
+async function siteIconResponse({ query, signal }) {
+  const id = query.get('id') ?? '';
+  if (!/^[a-z][a-z0-9]{5,31}$/.test(id)) {
+    return jsonResponse(400, {
+      ok: false,
+      error: { code: 'INVALID_WEB_ID', message: 'Invalid Web application id.' },
+    });
+  }
+
+  try {
+    const icon = await fetchSiteIcon(id, signal);
+    if (icon === null) {
+      return new Response(null, {
+        status: 404,
+        headers: {
           'cache-control': 'private, max-age=30',
           'x-content-type-options': 'nosniff',
-        });
-        res.end();
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': icon.contentType,
-        'content-length': String(icon.buffer.length),
-        'content-security-policy': 'sandbox',
-        'cache-control': 'private, max-age=300',
-        'x-content-type-options': 'nosniff',
-        'cross-origin-resource-policy': 'same-origin',
+        },
       });
-      res.end(req.method === 'HEAD' ? undefined : icon.buffer);
-    } catch {
-      if (!res.writableEnded) {
-        sendJson(res, 502, {
-          ok: false,
-          error: { code: 'SITE_ICON_UNAVAILABLE', message: 'Tiana site icon is unavailable.' },
-        });
-      }
     }
-  };
+    return imageResponse(icon, 300);
+  } catch {
+    return jsonResponse(502, {
+      ok: false,
+      error: { code: 'SITE_ICON_UNAVAILABLE', message: 'Tiana site icon is unavailable.' },
+    });
+  }
 }
 
 const MARKETPLACE_TIMEOUT_MS = 20_000;
@@ -947,24 +922,23 @@ function persistWorkspaces({ strict = false } = {}) {
   return strict ? pending : workspacePersistTail;
 }
 
-function previewHostname(req) {
-  const host = req?.headers?.host;
-  if (typeof host !== 'string' || host.length === 0) return null;
+function previewHostname(request) {
+  const host = request?.headers.get('host');
+  if (!host) return '127.0.0.1';
   try {
     return new URL(`http://${host}`).hostname;
   } catch {
-    return null;
+    return '127.0.0.1';
   }
 }
 
-function previewUrlFor(req, workspace) {
+function previewUrlFor(request, workspace) {
   if (workspace?.previewPort === null || workspace?.previewPort === undefined) return null;
-  const hostname = previewHostname(req);
-  if (hostname === null || typeof workspace.previewToken !== 'string') return null;
-  return `http://${hostname}:${workspace.previewPort}/?token=${encodeURIComponent(workspace.previewToken)}`;
+  if (typeof workspace.previewToken !== 'string') return null;
+  return `http://${previewHostname(request)}:${workspace.previewPort}/?token=${encodeURIComponent(workspace.previewToken)}`;
 }
 
-function publicWorkspace(workspace, req) {
+function publicWorkspace(workspace, request) {
   return {
     id: workspace.id,
     title: workspace.title,
@@ -977,7 +951,7 @@ function publicWorkspace(workspace, req) {
     sandbox: workspace.sandbox ?? null,
     dshWorkspace: workspace.dshWorkspace,
     dshSession: workspace.dshSession,
-    previewUrl: workspace.status === 'ready' ? previewUrlFor(req, workspace) : null,
+    previewUrl: workspace.status === 'ready' ? previewUrlFor(request, workspace) : null,
     createdAt: workspace.createdAt,
     readyAt: workspace.readyAt ?? null,
   };
@@ -1894,7 +1868,7 @@ export async function createLocalWorkspace(name, directory, { signal, resolveWor
   };
 }
 
-async function workspaceStatus(id, req) {
+async function workspaceStatus(id, request) {
   await loadWorkspaces();
   const workspace = WORKSPACES.get(id);
   if (workspace === undefined) {
@@ -1904,7 +1878,7 @@ async function workspaceStatus(id, req) {
       error: { code: 'WORKSPACE_NOT_FOUND', message: 'Local workspace was not found.' },
     };
   }
-  return { ok: true, workspace: publicWorkspace(workspace, req), error: null };
+  return { ok: true, workspace: publicWorkspace(workspace, request), error: null };
 }
 
 async function repairGuidedSessions(resolveSessionController) {
@@ -1971,7 +1945,7 @@ async function seedExistingGuidedSessions(resolveSessionController) {
   }
 }
 
-async function workspaceForSession(sessionId, req, resolveSessionController, signal) {
+async function workspaceForSession(sessionId, request, resolveSessionController, signal) {
   if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 160) {
     return {
       ok: false,
@@ -2006,7 +1980,7 @@ async function workspaceForSession(sessionId, req, resolveSessionController, sig
   }
   return {
     ok: true,
-    workspace: workspace === undefined ? null : publicWorkspace(workspace, req),
+    workspace: workspace === undefined ? null : publicWorkspace(workspace, request),
     error: null,
   };
 }
@@ -2117,101 +2091,40 @@ function closeAllWorkspacePreviews() {
   }
 }
 
-function createCoverHandler(connection) {
-  return async (req, res) => {
-    try {
-      if (rejectUntrusted(connection, req, res)) return;
-      if (!allowSubresourceRequest(req, res, 'cover')) return;
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        sendJson(res, 405, {
-          ok: false,
-          error: { code: 'METHOD_NOT_ALLOWED', message: 'Use GET or HEAD.' },
-        }, { allow: 'GET, HEAD' });
-        return;
-      }
-
-      const parsed = new URL(req.url ?? '/', 'http://localhost');
-      const name = parsed.searchParams.get('name') ?? '';
-      const version = parsed.searchParams.get('v') ?? '';
-      if (!validTemplateName(name)) {
-        sendJson(res, 400, {
-          ok: false,
-          error: { code: 'INVALID_TEMPLATE_NAME', message: 'Invalid template name.' },
-        });
-        return;
-      }
-
-      req.resume();
-      const controller = new AbortController();
-      const onClose = () => {
-        if (!res.writableEnded) controller.abort();
-      };
-      res.on('close', onClose);
-      try {
-        const cover = await fetchTemplateCover(
-          name,
-          /^\d{1,9}$/.test(version) ? version : '',
-          { signal: controller.signal },
-        );
-        if (res.writableEnded) return;
-        res.writeHead(200, {
-          'content-type': cover.contentType,
-          'content-length': String(cover.buffer.length),
-          'content-security-policy': 'sandbox',
-          'cache-control': 'private, max-age=86400',
-          'x-content-type-options': 'nosniff',
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(req.method === 'HEAD' ? undefined : cover.buffer);
-      } finally {
-        res.off('close', onClose);
-      }
-    } catch (error) {
-      if (error?.name === 'AbortError' || res.writableEnded) return;
-      sendJson(res, 502, {
-        ok: false,
-        error: {
-          code: 'TEMPLATE_COVER_UNAVAILABLE',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  };
-}
-
-function isSameAuthorityOrigin(origin, host) {
-  try {
-    const originUrl = new URL(origin);
-    if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') return false;
-    const hostUrl = new URL(`${originUrl.protocol}//${host}`);
-    return originUrl.host === hostUrl.host;
-  } catch {
-    return false;
-  }
-}
-
-function allowSubresourceRequest(req, res, label) {
-  const fetchSite = req.headers['sec-fetch-site'];
-  if (typeof fetchSite === 'string' && fetchSite !== 'same-origin' && fetchSite !== 'none') {
-    sendJson(res, 403, {
+async function templateCoverResponse({ query, signal }) {
+  const name = query.get('name') ?? '';
+  const version = query.get('v') ?? '';
+  if (!validTemplateName(name)) {
+    return jsonResponse(400, {
       ok: false,
-      error: { code: 'FORBIDDEN', message: `Cross-site ${label} requests are not allowed.` },
+      error: { code: 'INVALID_TEMPLATE_NAME', message: 'Invalid template name.' },
     });
-    return false;
   }
-
-  const origin = req.headers.origin;
-  if (typeof origin === 'string' && origin.length > 0 && typeof req.headers.host === 'string') {
-    if (!isSameAuthorityOrigin(origin, req.headers.host)) {
-      sendJson(res, 403, {
-        ok: false,
-        error: { code: 'FORBIDDEN', message: 'Origin does not match the Harness page.' },
-      });
-      return false;
-    }
+  try {
+    const cover = await fetchTemplateCover(name, /^\d{1,9}$/.test(version) ? version : '', { signal });
+    return imageResponse(cover, 86400);
+  } catch (error) {
+    return jsonResponse(502, {
+      ok: false,
+      error: {
+        code: 'TEMPLATE_COVER_UNAVAILABLE',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    });
   }
+}
 
-  return true;
+function imageResponse({ buffer, contentType }, maxAge) {
+  return new Response(buffer, {
+    headers: {
+      'content-type': contentType,
+      'content-length': String(buffer.length),
+      'content-security-policy': 'sandbox',
+      'cache-control': `private, max-age=${maxAge}`,
+      'x-content-type-options': 'nosniff',
+      'cross-origin-resource-policy': 'same-origin',
+    },
+  });
 }
 
 /**
@@ -2247,76 +2160,47 @@ async function fetchPublicTemplatePreview(name, version, { signal } = {}) {
   return { html: buffer.toString('utf8'), origin };
 }
 
-function createPreviewHandler(connection) {
-  return async (req, res) => {
-    try {
-      if (rejectUntrusted(connection, req, res)) return;
-      if (!allowSubresourceRequest(req, res, 'preview')) return;
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        sendJson(res, 405, {
-          ok: false,
-          error: { code: 'METHOD_NOT_ALLOWED', message: 'Use GET or HEAD.' },
-        }, { allow: 'GET, HEAD' });
-        return;
-      }
-
-      const parsed = new URL(req.url ?? '/', 'http://localhost');
-      const name = parsed.searchParams.get('name') ?? '';
-      const version = parsed.searchParams.get('v') ?? '';
-      if (!validTemplateName(name)) {
-        sendPreviewError(res, 400, 'Invalid template name.');
-        return;
-      }
-
-      req.resume();
-      const controller = new AbortController();
-      const onClose = () => {
-        if (!res.writableEnded) controller.abort();
-      };
-      res.on('close', onClose);
-      try {
-        const preview = await fetchPublicTemplatePreview(
-          name,
-          /^\d{1,9}$/.test(version) ? version : '',
-          { signal: controller.signal },
-        );
-        if (res.writableEnded) return;
-        const bytes = Buffer.from(preview.html, 'utf8');
-        res.writeHead(200, {
-          'content-type': 'text/html; charset=utf-8',
-          'content-length': String(bytes.length),
-          'content-security-policy': PREVIEW_CSP,
-          'cache-control': 'private, max-age=86400',
-          'referrer-policy': 'no-referrer',
-          'x-content-type-options': 'nosniff',
-          'x-frame-options': 'SAMEORIGIN',
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(req.method === 'HEAD' ? undefined : bytes);
-      } finally {
-        res.off('close', onClose);
-      }
-    } catch (error) {
-      if (error?.name === 'AbortError' || res.writableEnded) return;
-      sendPreviewError(res, 502, 'Template preview is unavailable.');
-    }
-  };
+async function templatePreviewResponse({ query, signal }) {
+  const name = query.get('name') ?? '';
+  const version = query.get('v') ?? '';
+  if (!validTemplateName(name)) {
+    return previewErrorResponse(400, 'Invalid template name.');
+  }
+  try {
+    const { html } = await fetchPublicTemplatePreview(name, /^\d{1,9}$/.test(version) ? version : '', { signal });
+    const bytes = Buffer.from(html, 'utf8');
+    return new Response(bytes, {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': String(bytes.length),
+        'content-security-policy': PREVIEW_CSP,
+        'cache-control': 'private, max-age=86400',
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff',
+        'x-frame-options': 'SAMEORIGIN',
+        'cross-origin-resource-policy': 'same-origin',
+      },
+    });
+  } catch {
+    return previewErrorResponse(502, 'Template preview is unavailable.');
+  }
 }
 
-function sendPreviewError(res, status, message) {
-  if (res.writableEnded) return;
+function previewErrorResponse(status, message) {
   const safe = String(message)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
   const body = `<!doctype html><meta charset="utf-8"><title>Template preview</title><body style="margin:0;padding:24px;font:14px system-ui,sans-serif;color:#555">${safe}</body>`;
-  res.writeHead(status, {
-    'content-type': 'text/html; charset=utf-8',
-    'content-security-policy': PREVIEW_CSP,
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
+  return new Response(body, {
+    status,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': PREVIEW_CSP,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   });
-  res.end(body);
 }
 
 function validTemplateName(name) {
@@ -2324,66 +2208,68 @@ function validTemplateName(name) {
 }
 
 /**
- * Register the panel's same-origin JSON API routes.
- * @param {object} webServer - `ctx.webServer` service.
- * @param {object} options - route options including DSH's `connection` service.
- * @returns {() => void} disposer removing every route.
+ * Register the panel's routes on DSH's authenticated API channel.
+ * @param {object} connection - the host's DSH connection service.
+ * @param {object} [options] - optional resolvers for DSH workspace services.
+ * @returns {() => Promise<void>} disposer removing every route.
  */
-export function registerTianaRoutes(webServer, options = {}) {
-  const connection = options.connection;
-  if (typeof connection?.requestRejection !== 'function') {
-    throw new TypeError('registerTianaRoutes requires a DSH connection service with requestRejection(req).');
+export function registerTianaRoutes(connection, options = {}) {
+  const registry = connection?.fetch;
+  if (typeof registry?.register !== 'function') {
+    throw new TypeError('Tiana API routes require DSH connection.fetch.register.');
   }
   const disposers = [];
-  resolveSandbox = typeof options.resolveSandbox === 'function' ? options.resolveSandbox : () => undefined;
-  const add = (method, path, handler) => {
-    disposers.push(webServer.register({
-      kind: 'exact',
+  const register = (path, methods, handler) => {
+    disposers.push(registry.register({
       path,
-      handler: createHandler(method, handler, connection),
+      methods,
+      requestBody: 'buffered',
+      fetch: createFetchHandler(handler),
     }));
   };
+  const add = (method, path, handler) => register(
+    path,
+    method === 'GET' ? ['GET', 'HEAD'] : [method],
+    async (context) => jsonResponse(200, await handler(context)),
+  );
 
-  add('GET', '/tiana/api/status', async ({ signal }) => {
+  add('GET', '/api/tiana/status', async ({ signal }) => {
     const status = await authStatus({ signal });
     return { ok: true, loggedIn: status.loggedIn, error: status.error };
   });
 
-  add('POST', '/tiana/api/login/start', async ({ signal }) => {
+  add('POST', '/api/tiana/login/start', async ({ signal }) => {
     const result = await loginStart({ signal });
     return { ok: true, ...result };
   });
 
-  add('POST', '/tiana/api/login/resume', async ({ signal }) => {
+  add('POST', '/api/tiana/login/resume', async ({ signal }) => {
     const result = await loginResume({ signal });
     return { ok: true, ...result };
   });
 
-  add('GET', '/tiana/api/spaces', ({ signal }) => listSpaces({ signal }));
+  add('GET', '/api/tiana/spaces', ({ signal }) => listSpaces({ signal }));
 
-  add('POST', '/tiana/api/spaces/switch', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
+  add('POST', '/api/tiana/spaces/switch', async ({ query, signal }) => {
+    const id = query.get('id') ?? '';
     return switchSpace(id, { signal });
   });
 
-  add('POST', '/tiana/api/logout', async ({ signal }) => {
+  add('POST', '/api/tiana/logout', async ({ signal }) => {
     const result = await logout({ signal });
     return { ok: result.ok, error: result.error };
   });
 
-  add('GET', '/tiana/api/sites', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const rawPage = url.searchParams.get('page') ?? '1';
-    const result = await listSites({ page: /^[1-9]\d{0,4}$/.test(rawPage) ? Number(rawPage) : NaN, q: url.searchParams.get('q') ?? '', signal });
+  add('GET', '/api/tiana/sites', async ({ query, signal }) => {
+    const rawPage = query.get('page') ?? '1';
+    const result = await listSites({ page: /^[1-9]\d{0,4}$/.test(rawPage) ? Number(rawPage) : NaN, q: query.get('q') ?? '', signal });
     return { ok: result.error === null, ...result };
   });
 
-  add('GET', '/tiana/api/templates', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const after = url.searchParams.get('after') ?? '';
-    const category = url.searchParams.get('category') ?? '';
-    const q = (url.searchParams.get('q') ?? '').trim();
+  add('GET', '/api/tiana/templates', async ({ query, signal }) => {
+    const after = query.get('after') ?? '';
+    const category = query.get('category') ?? '';
+    const q = (query.get('q') ?? '').trim();
     if (after.length > 512) {
       return {
         ok: false,
@@ -2428,16 +2314,15 @@ export function registerTianaRoutes(webServer, options = {}) {
     };
   });
 
-  add('POST', '/tiana/api/templates/clone', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const name = url.searchParams.get('name') ?? '';
-    const directory = url.searchParams.get('dir') ?? '';
-    const locale = url.searchParams.get('lang') ?? req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
-    const sandboxOff = url.searchParams.get('sandbox') === 'off';
+  add('POST', '/api/tiana/templates/clone', async ({ request, query, signal }) => {
+    const name = query.get('name') ?? '';
+    const directory = query.get('dir') ?? '';
+    const locale = requestLocale(query, request);
+    const sandboxOff = query.get('sandbox') === 'off';
     const result = await createLocalWorkspace(name, directory, {
       signal,
-      allowDuplicate: url.searchParams.get('allow') === '1',
-      previewHost: previewHostname(req),
+      allowDuplicate: query.get('allow') === '1',
+      previewHost: previewHostname(request),
       locale,
       sandboxOff,
       resolveWorkspaceRegistry: options.resolveWorkspaceRegistry,
@@ -2446,7 +2331,7 @@ export function registerTianaRoutes(webServer, options = {}) {
     return result;
   });
 
-  add('GET', '/tiana/api/workspaces', async ({ req }) => {
+  add('GET', '/api/tiana/workspaces', async ({ request }) => {
     await loadWorkspaces();
     const sandbox = await sandboxCapability();
     const visible = await Promise.all([...WORKSPACES.values()].map(async workspace => {
@@ -2458,53 +2343,48 @@ export function registerTianaRoutes(webServer, options = {}) {
     }));
     const items = visible.filter(Boolean)
       .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
-      .map((workspace) => publicWorkspace(workspace, req));
+      .map((workspace) => publicWorkspace(workspace, request));
     return { ok: true, items, sandbox, error: null };
   });
 
-  add('GET', '/tiana/api/workspaces/status', async ({ req }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
-    return workspaceStatus(id, req);
+  add('GET', '/api/tiana/workspaces/status', async ({ request, query }) => {
+    const id = query.get('id') ?? '';
+    return workspaceStatus(id, request);
   });
 
-  add('GET', '/tiana/api/workspaces/for-session', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
-    return workspaceForSession(id, req, options.resolveSessionController, signal);
+  add('GET', '/api/tiana/workspaces/for-session', async ({ request, query, signal }) => {
+    const id = query.get('id') ?? '';
+    return workspaceForSession(id, request, options.resolveSessionController, signal);
   });
-  add('POST', '/tiana/api/workspaces/prepare', async ({ req }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
-    const locale = url.searchParams.get('lang') ?? req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
-    const sandboxOff = url.searchParams.get('sandbox') === 'off';
-    return restartWorkspace(id, locale, { sandboxOff, previewHost: previewHostname(req) });
+  add('POST', '/api/tiana/workspaces/prepare', async ({ request, query }) => {
+    const id = query.get('id') ?? '';
+    const locale = requestLocale(query, request);
+    const sandboxOff = query.get('sandbox') === 'off';
+    return restartWorkspace(id, locale, { sandboxOff, previewHost: previewHostname(request) });
   });
 
-  add('POST', '/tiana/api/workspaces/remove', async ({ req }) => {
-    const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
+  add('POST', '/api/tiana/workspaces/remove', async ({ query }) => {
+    const id = query.get('id') ?? '';
     return removeLocalWorkspace(id);
   });
 
-  add('POST', '/tiana/api/workspaces/stop', async ({ req }) => {
-    return stopLocalPreview(new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '');
+  add('POST', '/api/tiana/workspaces/stop', async ({ query }) => {
+    return stopLocalPreview(query.get('id') ?? '');
   });
-  add('POST', '/tiana/api/workspaces/session', async ({ req, signal }) => {
-    const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
-    const locale = req.headers['x-tiana-locale'] ?? req.headers['accept-language'] ?? '';
+  add('POST', '/api/tiana/workspaces/session', async ({ request, query, signal }) => {
+    const id = query.get('id') ?? '';
+    const locale = requestLocale(query, request);
     return openLocalSession(id, options.resolveSessionController, locale, signal, options.resolveWorkspaceRegistry);
   });
 
-  add('POST', '/tiana/api/sites/delete', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
+  add('POST', '/api/tiana/sites/delete', async ({ query, signal }) => {
+    const id = query.get('id') ?? '';
     const result = await deleteSite(id, { signal });
     return { ok: result.ok, data: result.data, error: result.error };
   });
 
-  add('GET', '/tiana/api/template-detail', async ({ req, signal }) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const name = url.searchParams.get('name') ?? '';
+  add('GET', '/api/tiana/template-detail', async ({ query, signal }) => {
+    const name = query.get('name') ?? '';
     if (!validTemplateName(name)) {
       return {
         ok: false,
@@ -2516,86 +2396,36 @@ export function registerTianaRoutes(webServer, options = {}) {
     return { ok: true, item: result.item, error: result.error };
   });
 
-  disposers.push(webServer.register({
-    kind: 'exact',
-    path: '/tiana/api/template-cover',
-    handler: createCoverHandler(connection),
-  }));
-  disposers.push(webServer.register({
-    kind: 'exact',
-    path: '/tiana/api/template-preview',
-    handler: createPreviewHandler(connection),
-  }));
-  disposers.push(webServer.register({
-    kind: 'exact',
-    path: '/tiana/api/site-icon',
-    handler: createSiteIconHandler(connection),
-  }));
+  register('/api/tiana/template-cover', ['GET', 'HEAD'], templateCoverResponse);
+  register('/api/tiana/template-preview', ['GET', 'HEAD'], templatePreviewResponse);
+  register('/api/tiana/site-icon', ['GET', 'HEAD'], siteIconResponse);
 
+  resolveSandbox = options.resolveSandbox ?? (() => undefined);
   void repairGuidedSessions(options.resolveSessionController).catch(() => undefined);
   void seedExistingGuidedSessions(options.resolveSessionController).catch(() => undefined);
 
-  return () => {
+  return async () => {
     closeAllWorkspacePreviews();
     resolveSandbox = () => undefined;
-    for (const dispose of disposers.reverse()) dispose();
+    await Promise.all(disposers.map((dispose) => dispose()));
   };
 }
 
-function rejectUntrusted(connection, req, res) {
-  const refused = connection.requestRejection(req);
-  if (refused === undefined) return false;
-  if (req.method === 'HEAD') {
-    if (!res.writableEnded) {
-      res.writeHead(refused, {
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      });
-      res.end();
-    }
-    return true;
-  }
-  sendJson(res, refused, {
-    ok: false,
-    error: {
-      code: refused === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN',
-      message: refused === 401
-        ? 'Harness web authentication is required.'
-        : 'Untrusted request origin or host.',
-    },
-  });
-  return true;
+function requestLocale(query, request) {
+  return query.get('lang') ?? request.headers.get('accept-language') ?? '';
 }
 
-function createHandler(method, handler, connection) {
-  return async (req, res) => {
+function createFetchHandler(handler) {
+  return async (request) => {
+    const { signal } = request;
+    let response;
     try {
-      if (rejectUntrusted(connection, req, res)) return;
-      if (!allowRequest(req, res)) return;
-      if (req.method !== method) {
-        sendJson(res, 405, {
-          ok: false,
-          error: { code: 'METHOD_NOT_ALLOWED', message: `Use ${method}.` },
-        }, { allow: method });
-        return;
-      }
-
-      req.resume();
-      const controller = new AbortController();
-      const onClose = () => {
-        if (!res.writableEnded) controller.abort();
-      };
-      res.on('close', onClose);
-
-      try {
-        const payload = await handler({ req, signal: controller.signal });
-        if (!res.writableEnded) sendJson(res, 200, payload);
-      } finally {
-        res.off('close', onClose);
-      }
+      signal.throwIfAborted();
+      response = await handler({ request, query: new URL(request.url).searchParams, signal });
+      signal.throwIfAborted();
     } catch (error) {
-      if (error?.code === 'ABORTED' || res.writableEnded) return;
-      sendJson(res, 500, {
+      if (signal.aborted) return new Response(null, { status: 499 });
+      response = jsonResponse(500, {
         ok: false,
         error: {
           code: 'TIANA_PLUGIN_ERROR',
@@ -2603,51 +2433,19 @@ function createHandler(method, handler, connection) {
         },
       });
     }
+    return request.method === 'HEAD' ? new Response(null, response) : response;
   };
 }
 
-function allowRequest(req, res) {
-  if (req.headers['x-tiana-plugin'] !== '1') {
-    sendJson(res, 403, {
-      ok: false,
-      error: { code: 'FORBIDDEN', message: 'Missing Tiana plugin request header.' },
-    });
-    return false;
-  }
-
-  const fetchSite = req.headers['sec-fetch-site'];
-  if (typeof fetchSite === 'string' && fetchSite !== 'same-origin' && fetchSite !== 'none') {
-    sendJson(res, 403, {
-      ok: false,
-      error: { code: 'FORBIDDEN', message: 'Cross-site Tiana API requests are not allowed.' },
-    });
-    return false;
-  }
-
-  const origin = req.headers.origin;
-  if (typeof origin === 'string' && origin.length > 0 && typeof req.headers.host === 'string') {
-    if (!isSameAuthorityOrigin(origin, req.headers.host)) {
-      sendJson(res, 403, {
-        ok: false,
-        error: { code: 'FORBIDDEN', message: 'Origin does not match the Harness page.' },
-      });
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function sendJson(res, status, body, headers = {}) {
-  if (res.writableEnded) return;
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-    ...headers,
+function jsonResponse(status, body) {
+  return Response.json(body, {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   });
-  res.end(text);
 }
 
 function normalizeLogin(result) {

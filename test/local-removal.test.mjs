@@ -17,31 +17,31 @@ test('missing directories hide and recover; explicit removal persists while pres
   const item={id:'project',directory,title:'中文项目',template:'tpl-project',dshWorkspace:{ok:true,id:'harness'},dshSession:{ok:true,ready:true,sessionId:'session-keep'}};
   await writeFile(registry,JSON.stringify({version:1,items:[item]}));
   const routes=new Map();let workspaceDeletes=0;
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{connection:{requestRejection:()=>undefined},resolveWorkspaceRegistry:()=>({delete(){workspaceDeletes++;}})});t.after(dispose);
-  const call=(url,method='GET')=>new Promise((resolve,reject)=>{
-    const req={method,url,headers:{host:'127.0.0.1','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
-    const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
-    Promise.resolve(routes.get(url.split('?')[0])(req,res)).catch(reject);
-  });
-  assert.equal((await call('/tiana/api/workspaces')).items.length,1);
+  const dispose=registerTianaRoutes({fetch:{register(spec){routes.set(spec.path,spec.fetch);return()=>{};}}},{resolveWorkspaceRegistry:()=>({delete(){workspaceDeletes++;}})});t.after(dispose);
+  const call=async (url,method='GET')=>{
+    const request = new Request(new URL(url, 'http://dsh.internal'), {method});
+    const response = await routes.get(new URL(request.url).pathname)(request);
+    return response.json();
+  };
+  assert.equal((await call('/api/tiana/workspaces')).items.length,1);
   await rename(directory,directory+'-moved');
-  assert.equal((await call('/tiana/api/workspaces')).items.length,0);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,0);
   assert.equal(JSON.parse(await readFile(registry)).items.length,1,'temporary disappearance must not delete registration');
   await rename(directory+'-moved',directory);
-  assert.equal((await call('/tiana/api/workspaces')).items.length,1);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,1);
   await rm(directory,{recursive:true});await writeFile(directory,'a file, not a directory');
-  assert.equal((await call('/tiana/api/workspaces')).items.length,0);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,0);
   await rm(directory);await mkdir(directory);await writeFile(file,'user data');
-  assert.equal((await call('/tiana/api/workspaces')).items.length,1);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,1);
   // A failed atomic registry replacement must keep the in-memory and durable project.
   await mkdir(registry+'.tmp');
-  const failed=await Promise.all([call('/tiana/api/workspaces/remove?id=project','POST'),call('/tiana/api/workspaces/remove?id=project','POST')]);
+  const failed=await Promise.all([call('/api/tiana/workspaces/remove?id=project','POST'),call('/api/tiana/workspaces/remove?id=project','POST')]);
   assert.equal(failed[0].ok,false);assert.deepEqual(failed[1],failed[0]);
-  assert.equal((await call('/tiana/api/workspaces')).items.length,1);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,1);
   assert.equal(JSON.parse(await readFile(registry)).items.length,1);
   await rm(registry+'.tmp',{recursive:true});
-  assert.equal((await call('/tiana/api/workspaces/remove?id=project','POST')).ok,true);
-  assert.equal((await call('/tiana/api/workspaces')).items.length,0);
+  assert.equal((await call('/api/tiana/workspaces/remove?id=project','POST')).ok,true);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,0);
   assert.equal(JSON.parse(await readFile(registry)).items.length,0);
   assert.equal(await readFile(file,'utf8'),'user data');assert.equal(await readFile(history,'utf8'),'history data');assert.equal(workspaceDeletes,0);
   assert.equal((await removeLocalWorkspace('project')).ok,true,'retry is idempotent');

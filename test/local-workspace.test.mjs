@@ -41,45 +41,51 @@ test('local workspace recovers deleted sessions and stops a real built preview',
   assert.equal((await open()).ok,false);
   assert.equal(created,1,'a failed list must not create another session');
   const routes=new Map();
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{connection:{requestRejection:()=>undefined},resolveSessionController:()=>controller,resolveWorkspaceRegistry:registry});
+  const dispose=registerTianaRoutes({fetch:{register(spec){routes.set(spec.path,spec.fetch);return()=>{};}}},{resolveSessionController:()=>controller,resolveWorkspaceRegistry:registry});
   t.after(dispose);
-  const call=(path,method='GET')=>new Promise((resolve,reject)=>{
-    const req={method,url:path,headers:{host:'127.0.0.1','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
-    const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
-    Promise.resolve(routes.get(path.split('?')[0])(req,res)).catch(reject);
-  });
+  const call=async (path,method='GET')=>{
+    const request = new Request(new URL(path, 'http://dsh.internal'), {
+      method, headers: { 'accept-language': 'en' },
+    });
+    const response = await routes.get(new URL(request.url).pathname)(request);
+    return response.json();
+  };
   failList=false;
   items=[];
-  const empty=await call('/tiana/api/workspaces/session?id=project','POST');
+  const empty=await call('/api/tiana/workspaces/session?id=project&lang=zh','POST');
   assert.equal(empty.ok,true);
   assert.equal(empty.session.ready,true);
   assert.equal(created,2,'the HTTP route also creates in a completely empty workspace');
-  assert.equal((await call('/tiana/api/workspaces/status?id=project')).workspace.warning,null);
-  await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
+  assert.match(events.filter(e=>e[0]==='assistant/message').at(-1)[1].message.content[0].text,/改造助手/);
+  assert.equal((await call('/api/tiana/workspaces/status?id=project')).workspace.warning,null);
+  await call('/api/tiana/workspaces/prepare?id=project&sandbox=off','POST');
   assert.equal((await stopLocalPreview('project')).error.code,'WORKSPACE_BUSY');
   assert.equal((await removeLocalWorkspace('project')).error.code,'WORKSPACE_BUSY');
   let workspace;
   for(let i=0;i<100;i++) {
-    workspace=(await call('/tiana/api/workspaces/status?id=project')).workspace;
+    workspace=(await call('/api/tiana/workspaces/status?id=project')).workspace;
     if(workspace.status!=='preparing') break;
     await delay(100);
   }
   assert.equal(workspace.status,'ready',workspace.error);
   const url=workspace.previewUrl;
+  assert.equal(new URL(url).hostname, '127.0.0.1');
+  const forSession = await call('/api/tiana/workspaces/for-session?id=replacement');
+  assert.equal(forSession.workspace.previewUrl, url);
   assert.match(await (await fetch(url)).text(),/preview fixture/);
   const stopped=await stopLocalPreview('project');
   assert.equal(stopped.workspace.status,'stopped');
   assert.equal(stopped.workspace.previewUrl,null);
   await assert.rejects(fetch(url));
   assert.equal((await stopLocalPreview('project')).ok,true);
-  await call('/tiana/api/workspaces/prepare?id=project&sandbox=off','POST');
+  await call('/api/tiana/workspaces/prepare?id=project&sandbox=off','POST');
   for(let i=0;i<100;i++) {
-    workspace=(await call('/tiana/api/workspaces/status?id=project')).workspace;
+    workspace=(await call('/api/tiana/workspaces/status?id=project')).workspace;
     if(workspace.status!=='preparing') break;
     await delay(100);
   }
   assert.equal(workspace.status,'ready',workspace.error);
   assert.equal((await removeLocalWorkspace('project')).ok,true);
   await assert.rejects(fetch(workspace.previewUrl));
-  assert.equal((await call('/tiana/api/workspaces')).items.length,0);
+  assert.equal((await call('/api/tiana/workspaces')).items.length,0);
 });

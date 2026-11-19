@@ -41,16 +41,16 @@ test('development preview serves Vite HMR and build-only live reload; stop close
     });
     t.after(disposeSandbox);
   }
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{connection:{requestRejection:()=>undefined},resolveSandbox:()=>sandbox});
+  const dispose=registerTianaRoutes({fetch:{register(spec){routes.set(spec.path,spec.fetch);return()=>{};}}},{resolveSandbox:()=>sandbox});
   t.after(dispose);
-  const call=(path,method='GET')=>new Promise((resolve,reject)=>{
-    const req={method,url:path,headers:{host:'preview.example.test','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
-    const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
-    Promise.resolve(routes.get(path.split('?')[0])(req,res)).catch(reject);
-  });
+  const call=async (path,method='GET')=>{
+    const request = new Request(new URL(path, 'http://dsh.internal'), {method, headers: {host: 'preview.example.test'}});
+    const response = await routes.get(new URL(request.url).pathname)(request);
+    return response.json();
+  };
   const ready=async id=>{
     for(let i=0;i<400;i++) {
-      const w=(await call(`/tiana/api/workspaces/status?id=${id}`)).workspace;
+      const w=(await call(`/api/tiana/workspaces/status?id=${id}`)).workspace;
       if(w.status!=='preparing'){assert.equal(w.status,'ready',w.error);w.previewUrl=w.previewUrl.replace('preview.example.test','127.0.0.1');return w;}
       await delay(100);
     }
@@ -65,7 +65,7 @@ test('development preview serves Vite HMR and build-only live reload; stop close
   if(evidence) await mkdir(evidence,{recursive:true});
   const results=[];
   for(const id of ['vite','build']) {
-    await call(`/tiana/api/workspaces/prepare?id=${id}${sandbox?'':'&sandbox=off'}`,'POST');
+    await call(`/api/tiana/workspaces/prepare?id=${id}${sandbox?'':'&sandbox=off'}`,'POST');
     const w=await ready(id);
     assert.equal(w.warning,null);
     assert.equal(w.sandbox.confined,Boolean(sandbox));
@@ -95,22 +95,22 @@ test('development preview serves Vite HMR and build-only live reload; stop close
     await assert.rejects(fetch(w.previewUrl));
     await page.close();
     // A second start must not inherit the stopped watcher's aborted signal.
-    await call(`/tiana/api/workspaces/prepare?id=${id}${sandbox?'':'&sandbox=off'}`,'POST');
+    await call(`/api/tiana/workspaces/prepare?id=${id}${sandbox?'':'&sandbox=off'}`,'POST');
     await ready(id);await stopLocalPreview(id);
   }
   const mainPath=join(viteDir,'src','main.js');
   await writeFile(mainPath,'export const broken = ;');
-  await call(`/tiana/api/workspaces/prepare?id=vite${sandbox?'':'&sandbox=off'}`,'POST');
+  await call(`/api/tiana/workspaces/prepare?id=vite${sandbox?'':'&sandbox=off'}`,'POST');
   let failed;
   for(let i=0;i<150;i++) {
-    failed=(await call('/tiana/api/workspaces/status?id=vite')).workspace;
+    failed=(await call('/api/tiana/workspaces/status?id=vite')).workspace;
     if(failed.status!=='preparing') break;
     await delay(100);
   }
   assert.equal(failed.status,'failed');
   assert.equal(failed.previewUrl,null);
   await writeFile(mainPath,`document.querySelector('#app').textContent='recovered';`);
-  await call(`/tiana/api/workspaces/prepare?id=vite${sandbox?'':'&sandbox=off'}`,'POST');
+  await call(`/api/tiana/workspaces/prepare?id=vite${sandbox?'':'&sandbox=off'}`,'POST');
   await ready('vite');await stopLocalPreview('vite');
   results.push({invalidSource:'failed without opening',fixedSource:'restart ready'});
   if(evidence) await writeFile(join(evidence,sandbox?'hot-preview-sandbox-results.json':'hot-preview-results.json'),JSON.stringify(results,null,2)+'\n');
