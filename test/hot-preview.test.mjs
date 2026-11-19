@@ -41,7 +41,7 @@ test('development preview serves Vite HMR and build-only live reload; stop close
     });
     t.after(disposeSandbox);
   }
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{resolveSandbox:()=>sandbox});
+  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{connection:{requestRejection:()=>undefined},resolveSandbox:()=>sandbox});
   t.after(dispose);
   const call=(path,method='GET')=>new Promise((resolve,reject)=>{
     const req={method,url:path,headers:{host:'preview.example.test','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};

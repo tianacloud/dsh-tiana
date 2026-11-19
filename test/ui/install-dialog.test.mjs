@@ -191,3 +191,58 @@ test('local projects refresh automatically when missing directories hide and ret
   assert.ok(reads>=3);
   await screenshot(page,'local-directory-restored');
 });
+
+test('template preview dialog fetches HTML from same origin and renders inside sandboxed srcDoc iframe', async t => {
+  let previewHeader = null;
+  const { page } = await setup(t, async (url, route) => {
+    if (url.pathname.endsWith('/templates')) {
+      return {
+        items: [{
+          name: 'tpl-preview-demo',
+          display_name: '预览示例',
+          description: '沙箱预览测试',
+          current_version: { version: '3', installable: true, has_source: true },
+        }],
+        categories: [],
+        nextCursor: null,
+        origin: 'https://console.example.test',
+      };
+    }
+    if (url.pathname.endsWith('/template-detail')) {
+      return {
+        ok: true,
+        item: {
+          name: 'tpl-preview-demo',
+          display_name: '预览示例',
+          description: '沙箱预览测试',
+          current_version: { version: '3', installable: true, has_source: true },
+          prompt: 'Customize this template.',
+        },
+        error: null,
+      };
+    }
+    if (url.pathname.endsWith('/template-preview')) {
+      previewHeader = route.request().headers()['x-tiana-plugin'] ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: '<!doctype html><html><head><title>Preview</title></head><body><div id="preview-ok">sandbox preview ok</div><script>document.getElementById("preview-ok").dataset.ran="yes";</script></body></html>',
+      });
+      return false;
+    }
+  });
+  await page.goto(origin);
+  await page.getByRole('button', { name: '预览', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  const iframe = dialog.locator('iframe.tiana-preview-frame');
+  await iframe.waitFor();
+  assert.equal(previewHeader, '1');
+  assert.equal(await iframe.getAttribute('sandbox'), 'allow-scripts');
+  assert.equal(await iframe.getAttribute('src'), null);
+  const srcdoc = await iframe.getAttribute('srcdoc');
+  assert.match(srcdoc ?? '', /http-equiv="Content-Security-Policy"/i);
+  const frameEl = dialog.frameLocator('iframe.tiana-preview-frame').locator('#preview-ok');
+  await frameEl.waitFor();
+  assert.equal(await frameEl.textContent(), 'sandbox preview ok');
+  assert.equal(await frameEl.getAttribute('data-ran'), 'yes');
+});

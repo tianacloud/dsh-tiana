@@ -35,6 +35,7 @@ function writeHostDiagnostics(ctx, extra = {}) {
         loadedAt: new Date().toISOString(),
         version: PACKAGE_VERSION,
         webServer: Boolean(ctx.get('webServer')),
+        connection: Boolean(ctx.get('connection')),
         workspaceRegistry: Boolean(ctx.get('workspaceRegistry')),
         sessionController: Boolean(ctx.get('sessionController')),
         sandbox: Boolean(ctx.get('sandbox')),
@@ -55,9 +56,10 @@ export function apply(ctx) {
 
   writeHostDiagnostics(ctx);
 
-  const mountRoutes = (webCtx, webServer) => {
+  const mountRoutes = (webCtx, webServer, connection) => {
     writeHostDiagnostics(webCtx, { routesMounted: true });
     webCtx.effect(() => registerTianaRoutes(webServer, {
+      connection,
       resolveWorkspaceRegistry: () => webCtx.get('workspaceRegistry') ?? ctx.get('workspaceRegistry'),
       resolveSessionController: () => webCtx.get('sessionController') ?? ctx.get('sessionController'),
       resolveSandbox: () => webCtx.get('sandbox') ?? ctx.get('sandbox'),
@@ -65,15 +67,16 @@ export function apply(ctx) {
   };
 
   if (typeof ctx.inject === 'function') {
-    ctx.inject(['webServer'], (webCtx) => {
-      mountRoutes(webCtx, webCtx.webServer);
+    ctx.inject(['webServer', 'connection'], (webCtx) => {
+      mountRoutes(webCtx, webCtx.webServer, webCtx.connection);
     });
   } else {
     const webServer = ctx.get('webServer');
-    if (webServer === undefined) {
-      ctx.logger.info('[tiana] web server unavailable; panel API routes stay disabled');
+    const connection = ctx.get('connection');
+    if (webServer === undefined || connection === undefined) {
+      ctx.logger.info('[tiana] web server or connection service unavailable; panel API routes stay disabled');
     } else {
-      mountRoutes(ctx, webServer);
+      mountRoutes(ctx, webServer, connection);
     }
   }
 

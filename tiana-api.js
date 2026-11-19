@@ -8,10 +8,10 @@
  * access token in Host memory. The refresh token is never used, returned or
  * persisted by this module.
  *
- * Reaching the DSH Web server is the trust boundary: a connection that can use
- * Harness is trusted to use these routes, so they ask for no second
- * authentication. They only reject cross-site browser requests with a
- * same-origin/custom-header check.
+ * Every route registered on DSH's `webServer` checks
+ * `connection.requestRejection(req)` first (Host/Origin fence plus browser/API
+ * authentication), and JSON API routes also enforce the custom
+ * `x-tiana-plugin: 1` header as defense in depth.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -134,8 +134,9 @@ async function fetchSiteIcon(id) {
   }
 }
 
-function createSiteIconHandler() {
+function createSiteIconHandler(connection) {
   return async (req, res) => {
+    if (rejectUntrusted(connection, req, res)) return;
     if (!allowSubresourceRequest(req, res, 'site icon')) return;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       sendJson(res, 405, {
@@ -168,6 +169,7 @@ function createSiteIconHandler() {
       res.writeHead(200, {
         'content-type': icon.contentType,
         'content-length': String(icon.buffer.length),
+        'content-security-policy': 'sandbox',
         'cache-control': 'private, max-age=300',
         'x-content-type-options': 'nosniff',
         'cross-origin-resource-policy': 'same-origin',
@@ -2115,9 +2117,10 @@ function closeAllWorkspacePreviews() {
   }
 }
 
-function createCoverHandler() {
+function createCoverHandler(connection) {
   return async (req, res) => {
     try {
+      if (rejectUntrusted(connection, req, res)) return;
       if (!allowSubresourceRequest(req, res, 'cover')) return;
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         sendJson(res, 405, {
@@ -2154,6 +2157,7 @@ function createCoverHandler() {
         res.writeHead(200, {
           'content-type': cover.contentType,
           'content-length': String(cover.buffer.length),
+          'content-security-policy': 'sandbox',
           'cache-control': 'private, max-age=86400',
           'x-content-type-options': 'nosniff',
           'cross-origin-resource-policy': 'same-origin',
@@ -2243,9 +2247,10 @@ async function fetchPublicTemplatePreview(name, version, { signal } = {}) {
   return { html: buffer.toString('utf8'), origin };
 }
 
-function createPreviewHandler() {
+function createPreviewHandler(connection) {
   return async (req, res) => {
     try {
+      if (rejectUntrusted(connection, req, res)) return;
       if (!allowSubresourceRequest(req, res, 'preview')) return;
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         sendJson(res, 405, {
@@ -2321,16 +2326,21 @@ function validTemplateName(name) {
 /**
  * Register the panel's same-origin JSON API routes.
  * @param {object} webServer - `ctx.webServer` service.
+ * @param {object} options - route options including DSH's `connection` service.
  * @returns {() => void} disposer removing every route.
  */
 export function registerTianaRoutes(webServer, options = {}) {
+  const connection = options.connection;
+  if (typeof connection?.requestRejection !== 'function') {
+    throw new TypeError('registerTianaRoutes requires a DSH connection service with requestRejection(req).');
+  }
   const disposers = [];
   resolveSandbox = typeof options.resolveSandbox === 'function' ? options.resolveSandbox : () => undefined;
   const add = (method, path, handler) => {
     disposers.push(webServer.register({
       kind: 'exact',
       path,
-      handler: createHandler(method, handler),
+      handler: createHandler(method, handler, connection),
     }));
   };
 
@@ -2509,17 +2519,17 @@ export function registerTianaRoutes(webServer, options = {}) {
   disposers.push(webServer.register({
     kind: 'exact',
     path: '/tiana/api/template-cover',
-    handler: createCoverHandler(),
+    handler: createCoverHandler(connection),
   }));
   disposers.push(webServer.register({
     kind: 'exact',
     path: '/tiana/api/template-preview',
-    handler: createPreviewHandler(),
+    handler: createPreviewHandler(connection),
   }));
   disposers.push(webServer.register({
     kind: 'exact',
     path: '/tiana/api/site-icon',
-    handler: createSiteIconHandler(),
+    handler: createSiteIconHandler(connection),
   }));
 
   void repairGuidedSessions(options.resolveSessionController).catch(() => undefined);
@@ -2532,9 +2542,35 @@ export function registerTianaRoutes(webServer, options = {}) {
   };
 }
 
-function createHandler(method, handler) {
+function rejectUntrusted(connection, req, res) {
+  const refused = connection.requestRejection(req);
+  if (refused === undefined) return false;
+  if (req.method === 'HEAD') {
+    if (!res.writableEnded) {
+      res.writeHead(refused, {
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end();
+    }
+    return true;
+  }
+  sendJson(res, refused, {
+    ok: false,
+    error: {
+      code: refused === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN',
+      message: refused === 401
+        ? 'Harness web authentication is required.'
+        : 'Untrusted request origin or host.',
+    },
+  });
+  return true;
+}
+
+function createHandler(method, handler, connection) {
   return async (req, res) => {
     try {
+      if (rejectUntrusted(connection, req, res)) return;
       if (!allowRequest(req, res)) return;
       if (req.method !== method) {
         sendJson(res, 405, {

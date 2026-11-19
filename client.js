@@ -1428,6 +1428,26 @@ window.__ModuleLoader__.load({
       );
     }
 
+    const PREVIEW_SRCDOC_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+
+    function withPreviewCsp(html) {
+      if (typeof DOMParser === 'function') {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const meta = doc.createElement('meta');
+        meta.setAttribute('http-equiv', 'Content-Security-Policy');
+        meta.setAttribute('content', PREVIEW_SRCDOC_CSP);
+        if (doc.head) {
+          doc.head.prepend(meta);
+        } else if (doc.documentElement) {
+          const head = doc.createElement('head');
+          head.append(meta);
+          doc.documentElement.prepend(head);
+        }
+        return `<!doctype html>${doc.documentElement.outerHTML}`;
+      }
+      return `<!doctype html><head><meta http-equiv="Content-Security-Policy" content="${PREVIEW_SRCDOC_CSP}"></head>${html}`;
+    }
+
     function TemplateDetailDialog({ t, template, loading, error, onClose, onRetry, onInstall, prompt }) {
       const title = template?.title || t('templates.detail');
       const [copied, setCopied] = React.useState(false);
@@ -1443,11 +1463,41 @@ window.__ModuleLoader__.load({
           setCopyFailed(true);
         }
       };
-      const previewParams = new URLSearchParams();
-      if (template) {
-        previewParams.set('name', template.id);
-        if (template.version) previewParams.set('v', template.version);
-      }
+      const previewUrl = React.useMemo(() => {
+        if (!template || !template.enabled) return null;
+        const params = new URLSearchParams();
+        params.set('name', template.id);
+        if (template.version) params.set('v', template.version);
+        return `/tiana/api/template-preview?${params.toString()}`;
+      }, [template?.id, template?.version, template?.enabled]);
+      const [previewState, setPreviewState] = React.useState({ status: 'idle', html: '' });
+
+      React.useEffect(() => {
+        if (!previewUrl) {
+          setPreviewState({ status: 'idle', html: '' });
+          return undefined;
+        }
+        const controller = new AbortController();
+        setPreviewState({ status: 'loading', html: '' });
+        fetch(previewUrl, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          signal: controller.signal,
+          headers: { 'x-tiana-plugin': '1' },
+        })
+          .then(async (response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const html = await response.text();
+            if (!controller.signal.aborted) {
+              setPreviewState({ status: 'ready', html: withPreviewCsp(html) });
+            }
+          })
+          .catch((fetchError) => {
+            if (controller.signal.aborted || fetchError?.name === 'AbortError') return;
+            setPreviewState({ status: 'error', html: '' });
+          });
+        return () => controller.abort();
+      }, [previewUrl]);
 
       return h(
         'div',
@@ -1485,13 +1535,27 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'tiana-dialog-preview' },
                   template.enabled
-                    ? h('iframe', {
-                        className: 'tiana-preview-frame',
-                        src: `/tiana/api/template-preview?${previewParams.toString()}`,
-                        title: `${title} ${t('templates.preview')}`,
-                        sandbox: 'allow-scripts',
-                        referrerPolicy: 'no-referrer',
-                      })
+                    ? previewState.status === 'ready'
+                      ? h('iframe', {
+                          className: 'tiana-preview-frame',
+                          srcDoc: previewState.html,
+                          title: `${title} ${t('templates.preview')}`,
+                          sandbox: 'allow-scripts',
+                          referrerPolicy: 'no-referrer',
+                        })
+                      : previewState.status === 'error'
+                        ? h(
+                            'div',
+                            { className: 'tiana-state' },
+                            h('div', { className: 'tiana-empty-icon' }, h(Icon, { name: 'spark', size: 18 })),
+                            h('div', { className: 'tiana-state-title' }, t('templates.previewUnavailable')),
+                          )
+                        : h(
+                            'div',
+                            { className: 'tiana-state' },
+                            h(Spinner, null),
+                            h('div', { className: 'tiana-state-title' }, t('templates.loading')),
+                          )
                     : h(
                         'div',
                         { className: 'tiana-state' },

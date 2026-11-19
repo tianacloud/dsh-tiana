@@ -17,7 +17,7 @@ test('missing directories hide and recover; explicit removal persists while pres
   const item={id:'project',directory,title:'中文项目',template:'tpl-project',dshWorkspace:{ok:true,id:'harness'},dshSession:{ok:true,ready:true,sessionId:'session-keep'}};
   await writeFile(registry,JSON.stringify({version:1,items:[item]}));
   const routes=new Map();let workspaceDeletes=0;
-  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{resolveWorkspaceRegistry:()=>({delete(){workspaceDeletes++;}})});t.after(dispose);
+  const dispose=registerTianaRoutes({register(spec){routes.set(spec.path,spec.handler);return()=>{};}},{connection:{requestRejection:()=>undefined},resolveWorkspaceRegistry:()=>({delete(){workspaceDeletes++;}})});t.after(dispose);
   const call=(url,method='GET')=>new Promise((resolve,reject)=>{
     const req={method,url,headers:{host:'127.0.0.1','x-tiana-plugin':'1'},socket:{},on(){},off(){},resume(){}};
     const res={on(){},off(){},writableEnded:false,writeHead(){},end(data){this.writableEnded=true;resolve(JSON.parse(data));}};
